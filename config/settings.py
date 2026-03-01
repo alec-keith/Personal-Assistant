@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Discord (optional — used as fallback when BlueBubbles is unavailable)
     discord_bot_token: str = ""
     discord_user_id: int = 0
+    discord_channel_id: int = 0  # server channel for proactive messages + @mention
 
     # BlueBubbles / iMessage (primary channel)
     bluebubbles_server_url: str = ""    # e.g. https://abc123.ngrok.io

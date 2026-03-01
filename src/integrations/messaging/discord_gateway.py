@@ -35,6 +35,7 @@ class DiscordGateway(MessagingGateway):
     def __init__(self, on_message: Callable[[str], Awaitable[str]]) -> None:
         self._on_message = on_message
         self._dm_channel: discord.DMChannel | None = None
+        self._text_channel: discord.TextChannel | None = None
         self._voice_client: discord.VoiceClient | None = None
         # Whether to also speak Roman's text responses in the voice channel
         self._speak_in_voice: bool = False
@@ -61,6 +62,12 @@ class DiscordGateway(MessagingGateway):
             user = await client.fetch_user(settings.discord_user_id)
             self._dm_channel = await user.create_dm()
             logger.info("DM channel ready with user %s", user.name)
+            if settings.discord_channel_id:
+                ch = client.get_channel(settings.discord_channel_id)
+                if ch is None:
+                    ch = await client.fetch_channel(settings.discord_channel_id)
+                self._text_channel = ch
+                logger.info("Server text channel ready: #%s", ch.name)
 
         @client.event
         async def on_voice_state_update(
@@ -105,7 +112,12 @@ class DiscordGateway(MessagingGateway):
                 return
             if message.author.bot:
                 return
-            if not isinstance(message.channel, discord.DMChannel):
+            in_dm = isinstance(message.channel, discord.DMChannel)
+            in_text_channel = (
+                settings.discord_channel_id != 0
+                and message.channel.id == settings.discord_channel_id
+            )
+            if not in_dm and not in_text_channel:
                 return
 
             # ---- Voice channel commands ----
@@ -254,11 +266,19 @@ class DiscordGateway(MessagingGateway):
     # ------------------------------------------------------------------
 
     async def send_message(self, text: str) -> None:
-        if self._dm_channel is None:
-            logger.warning("DM channel not ready — cannot send proactive message")
+        # Prefer server channel (triggers @mention notification) over DM
+        if self._text_channel is not None:
+            mention = f"<@{settings.discord_user_id}>"
+            chunks = _chunk(text, 1900)
+            await self._text_channel.send(f"{mention} {chunks[0]}")
+            for chunk in chunks[1:]:
+                await self._text_channel.send(chunk)
+        elif self._dm_channel is not None:
+            for chunk in _chunk(text, 1900):
+                await self._dm_channel.send(chunk)
+        else:
+            logger.warning("No channel ready — cannot send proactive message")
             return
-        for chunk in _chunk(text, 1900):
-            await self._dm_channel.send(chunk)
         # Speak proactive messages in voice too if joined
         if self._speak_in_voice and self._voice_client:
             asyncio.create_task(self._play_tts(text))
