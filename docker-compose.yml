@@ -1,0 +1,15 @@
+version: "3.9"
+
+# Local development / testing only.
+# For production, deploy to Railway via Dockerfile.
+
+services:
+  atlas:
+    build: .
+    env_file: .env
+    ports:
+      - "8080:8080"   # BlueBubbles webhook + health check
+    volumes:
+      - ./data:/app/data      # Persist ChromaDB memory
+      - ./logs:/app/logs      # Persist logs
+    restart: unless-stopped

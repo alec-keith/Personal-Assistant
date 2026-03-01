@@ -162,15 +162,46 @@ async def main() -> None:
     env = load_env()
 
     # 1. Anthropic
-    header("1/4  Claude API (Anthropic)")
+    header("1/5  Claude API (Anthropic)")
     p("  Get your key at: https://console.anthropic.com")
     key = prompt("ANTHROPIC_API_KEY", secret=True, default=env.get("ANTHROPIC_API_KEY", ""))
     if key:
         env["ANTHROPIC_API_KEY"] = key
         await check_anthropic(key)
 
-    # 2. Discord
-    header("2/4  Discord")
+    # 2. BlueBubbles / iMessage (primary)
+    header("2/5  BlueBubbles / iMessage  (primary channel)")
+    p("  BlueBubbles is a free Mac app that exposes iMessage via an API.")
+    p("  Steps:")
+    p("    a) Download from: https://bluebubbles.app")
+    p("    b) Open BlueBubbles Server on your Mac → API & Webhooks tab")
+    p("    c) Enable ngrok (you'll need a free account at ngrok.com)")
+    p("    d) Copy the generated ngrok URL (e.g. https://abc123.ngrok.io)")
+    p("    e) Set a server password in BlueBubbles settings")
+    p("    f) After deploying to Railway, add a webhook in BlueBubbles:")
+    p("       URL: https://your-railway-app.railway.app/webhooks/bluebubbles")
+    p("")
+    bb_url = prompt("BLUEBUBBLES_SERVER_URL (leave blank to skip)", default=env.get("BLUEBUBBLES_SERVER_URL", ""))
+    bb_pass = prompt("BLUEBUBBLES_PASSWORD", secret=True, default=env.get("BLUEBUBBLES_PASSWORD", "")) if bb_url else ""
+    bb_handle = prompt("Your iMessage handle (phone or Apple ID email)", default=env.get("BLUEBUBBLES_IMESSAGE_HANDLE", "")) if bb_url else ""
+    if bb_url and bb_pass:
+        env["BLUEBUBBLES_SERVER_URL"] = bb_url
+        env["BLUEBUBBLES_PASSWORD"] = bb_pass
+        env["BLUEBUBBLES_IMESSAGE_HANDLE"] = bb_handle
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.get(f"{bb_url.rstrip('/')}/api/v1/ping", params={"guid": bb_pass})
+            if r.status_code == 200:
+                ok("BlueBubbles server reachable")
+            else:
+                warn(f"BlueBubbles returned HTTP {r.status_code} — check your Mac is running BlueBubbles")
+        except Exception as e:
+            warn(f"Could not reach BlueBubbles server: {e}")
+            warn("That's OK if your Mac isn't running yet — fill in the URL and continue.")
+
+    # 3. Discord (fallback)
+    header("3/5  Discord  (fallback — used when Mac/BlueBubbles is unreachable)")
     p("  Steps:")
     p("    a) Go to https://discord.com/developers/applications")
     p("    b) New Application → Bot → Reset Token → copy token")
@@ -188,7 +219,7 @@ async def main() -> None:
     p("\n  Bot invite URL (open this in your browser to add the bot to your server):")
     if token:
         try:
-            import httpx, asyncio as _a
+            import httpx
             async with httpx.AsyncClient() as c:
                 r = await c.get(
                     "https://discord.com/api/v10/users/@me",
@@ -201,23 +232,23 @@ async def main() -> None:
     else:
         print("  (fill in DISCORD_BOT_TOKEN first, then re-run to get the URL)")
 
-    # 3. Todoist
-    header("3/4  Todoist")
+    # 4. Todoist
+    header("4/5  Todoist")
     p("  Get your API token at: https://todoist.com/app/settings/integrations/developer")
     todoist_token = prompt("TODOIST_API_TOKEN", secret=True, default=env.get("TODOIST_API_TOKEN", ""))
     if todoist_token:
         env["TODOIST_API_TOKEN"] = todoist_token
         await check_todoist(todoist_token)
 
-    # 4. iCloud CalDAV (Fantastical)
-    header("4/4  Fantastical via iCloud CalDAV")
+    # 5. iCloud CalDAV (Fantastical)
+    header("5/5  Fantastical via iCloud CalDAV")
     p("  Fantastical reads from iCloud Calendar. We write there and it appears instantly.")
     p("  You need an App-Specific Password (NOT your Apple ID password):")
     p("    1) Go to: https://appleid.apple.com")
     p("    2) Security → App-Specific Passwords → Generate")
     p("    3) Name it 'Atlas' and copy the xxxx-xxxx-xxxx-xxxx password")
     icloud_user = prompt("ICLOUD_USERNAME (your Apple ID email)", default=env.get("ICLOUD_USERNAME", ""))
-    icloud_pass = prompt("ICLOUD_APP_PASSWORD (xxxx-xxxx-xxxx-xxxx)", secret=True, default=env.get("ICLOUD_APP_PASSWORD", ""))
+    icloud_pass = prompt("ICLOUD_APP_PASSWORD (xxxx-xxxx-xxxx-xxxx)", secret=True, default=env.get("ICLOUD_APP_PASSWORD", "")) if icloud_user else ""
     if icloud_user and icloud_pass:
         env["ICLOUD_USERNAME"] = icloud_user
         env["ICLOUD_APP_PASSWORD"] = icloud_pass
@@ -235,7 +266,14 @@ async def main() -> None:
     save_env(env)
 
     p(f"\n{BOLD}All done!{RESET}")
-    p("Run the assistant with:")
+    p("Next step — deploy to Railway:")
+    p("  1. Push this project to GitHub")
+    p("  2. Go to railway.app → New Project → Deploy from GitHub repo")
+    p("  3. Add a Volume → mount path: /app/data/memory")
+    p("  4. Copy all your .env values into Railway's Variables tab")
+    p("  5. Copy your Railway public URL → paste into BlueBubbles as a webhook")
+    p("")
+    p("Or run locally with:")
     p(f"  source .venv/bin/activate && python main.py")
     p("")
     p("Or install as a background service (auto-starts on login):")

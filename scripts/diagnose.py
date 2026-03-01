@@ -52,10 +52,33 @@ async def check_anthropic() -> None:
         record("API key", False, str(e)[:80])
 
 
-async def check_discord() -> None:
-    print(f"\n{BOLD}Discord{RESET}")
+async def check_bluebubbles() -> None:
+    print(f"\n{BOLD}BlueBubbles / iMessage (primary){RESET}")
+    from config import settings
+    if not settings.use_bluebubbles:
+        record("BlueBubbles", False, "BLUEBUBBLES_SERVER_URL / BLUEBUBBLES_PASSWORD not set")
+        return
     try:
-        from config import settings
+        import httpx
+        url = f"{settings.bluebubbles_server_url.rstrip('/')}/api/v1/ping"
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(url, params={"guid": settings.bluebubbles_password})
+        if r.status_code == 200:
+            record("server reachable", True, settings.bluebubbles_server_url)
+            record("handle configured", bool(settings.bluebubbles_imessage_handle), settings.bluebubbles_imessage_handle)
+        else:
+            record("server reachable", False, f"HTTP {r.status_code} — is BlueBubbles running on your Mac?")
+    except Exception as e:
+        record("BlueBubbles", False, f"{str(e)[:80]} — is your Mac on and BlueBubbles running?")
+
+
+async def check_discord() -> None:
+    print(f"\n{BOLD}Discord (fallback){RESET}")
+    from config import settings
+    if not settings.use_discord:
+        record("Discord", False, "DISCORD_BOT_TOKEN / DISCORD_USER_ID not set (optional if using BlueBubbles)")
+        return
+    try:
         import httpx
         async with httpx.AsyncClient() as c:
             r = await c.get(
@@ -122,6 +145,7 @@ async def main() -> None:
 
     await check_env()
     await check_anthropic()
+    await check_bluebubbles()
     await check_discord()
     await check_todoist()
     await check_calendar()
