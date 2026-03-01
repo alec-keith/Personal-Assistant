@@ -136,6 +136,7 @@ async def main() -> None:
         port=settings.port,
         log_level="warning",
         access_log=False,
+        timeout_graceful_shutdown=3,
     )
     server = uvicorn.Server(config)
     tasks.append(asyncio.create_task(server.serve()))

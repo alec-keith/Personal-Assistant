@@ -25,9 +25,6 @@ from src.integrations.calendar import CalendarClient
 from .prompts import build_system_prompt
 from .tools import TOOLS
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
 
 # Short-term in-memory conversation history (per session, not persisted)
