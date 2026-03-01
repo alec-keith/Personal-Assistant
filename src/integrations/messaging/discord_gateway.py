@@ -151,7 +151,10 @@ class DiscordGateway(MessagingGateway):
             async with message.channel.typing():
                 try:
                     response = await self._on_message(user_text)
-                    for chunk in _chunk(response, 1900):
+                    chunks = _chunk(response, 1900)
+                    # Use reply for first chunk so Discord threads it + notifies
+                    await message.reply(chunks[0])
+                    for chunk in chunks[1:]:
                         await message.channel.send(chunk)
                     # Speak in voice channel if joined
                     if self._speak_in_voice and self._voice_client:
