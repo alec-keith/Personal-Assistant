@@ -44,8 +44,12 @@ class BlueBubblesGateway(MessagingGateway):
         app: FastAPI | None = None,
     ) -> None:
         self._on_message = on_message
-        # The most recent chat GUID — used to route replies back to the right conversation
-        self._active_chat_guid: str | None = None
+        # Pre-populate from BLUEBUBBLES_IMESSAGE_HANDLE so proactive messages work on fresh start.
+        # Format: "iMessage;-;+15551234567" or "iMessage;-;email@icloud.com"
+        handle = settings.bluebubbles_imessage_handle.strip()
+        self._active_chat_guid: str | None = (
+            f"iMessage;-;{handle}" if handle else None
+        )
         # Shared FastAPI app (so Discord health endpoint and BB webhook share one server)
         self._app = app
         self._register_routes()

@@ -135,8 +135,16 @@ TOOLS: list[dict] = [
     },
     # ------------------------------------------------------------------ Calendar
     {
+        "name": "list_calendars",
+        "description": "List all available calendars (e.g. Home, Work, Apple Calendar). Call this if you're unsure which calendar to use.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "list_events",
-        "description": "List upcoming calendar events (synced with Fantastical).",
+        "description": (
+            "List upcoming calendar events across all calendars (synced with Fantastical). "
+            "Each event shows which calendar it belongs to."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -145,17 +153,25 @@ TOOLS: list[dict] = [
                     "description": "How many days to look ahead",
                     "default": 7,
                 },
+                "calendar_name": {
+                    "type": "string",
+                    "description": "Limit results to a specific calendar (e.g. 'Work', 'Home'). Omit to search all.",
+                },
             },
         },
     },
     {
         "name": "get_today_events",
-        "description": "Get all calendar events for today.",
+        "description": "Get all calendar events for today across all calendars.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "add_event",
-        "description": "Add a new event to the calendar (appears in Fantastical immediately).",
+        "description": (
+            "Add a new event to a calendar (appears in Fantastical immediately). "
+            "Includes full alert stack: 2 weeks, 1 week, 3 days, 1 day, 1 hour, and 15 minutes before. "
+            "Route work/professional events to 'Work', personal/social events to 'Home'."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -170,6 +186,10 @@ TOOLS: list[dict] = [
                 },
                 "description": {"type": "string"},
                 "location": {"type": "string"},
+                "calendar_name": {
+                    "type": "string",
+                    "description": "Calendar to add the event to. Use 'Work' for professional events, 'Home' for personal ones. Defaults to Home.",
+                },
             },
             "required": ["title", "start_iso"],
         },
@@ -178,9 +198,8 @@ TOOLS: list[dict] = [
     {
         "name": "schedule_reminder",
         "description": (
-            "Schedule a proactive reminder to send to the user at a specific time. "
-            "Use this when the user says 'remind me at 3pm' or when you want to "
-            "follow up on something later."
+            "Schedule a one-shot reminder to send to the user at a specific time. "
+            "Use this when the user says 'remind me at 3pm' or when you want to follow up once."
         ),
         "input_schema": {
             "type": "object",
@@ -192,6 +211,69 @@ TOOLS: list[dict] = [
                 },
             },
             "required": ["message", "when_iso"],
+        },
+    },
+    {
+        "name": "schedule_recurring",
+        "description": (
+            "Create a new recurring scheduled message that persists across restarts. "
+            "Use this when the user wants Roman to check in regularly, send reminders on a schedule, "
+            "or repeat any message on a pattern. "
+            "Examples: 'check in with me every 3 hours' → interval_minutes=180; "
+            "'remind me every weekday at 9am' → cron='0 9 * * mon-fri'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "Short unique identifier, e.g. 'checkin_3h' or 'daily_focus'",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The message to send each time this job fires",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description of what this job does",
+                },
+                "interval_minutes": {
+                    "type": "integer",
+                    "description": "Run every N minutes. Use this for 'every X hours/minutes'.",
+                },
+                "cron": {
+                    "type": "string",
+                    "description": "Standard 5-field cron expression (minute hour day month weekday). Use for specific times/days.",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": (
+                        "ISO date string to stop the job after, e.g. '2026-03-07'. "
+                        "Use when the user says 'just this week', 'until Friday', 'for the next month', etc. "
+                        "Omit entirely for indefinite recurring jobs."
+                    ),
+                },
+            },
+            "required": ["job_id", "message", "description"],
+        },
+    },
+    {
+        "name": "list_jobs",
+        "description": "List all active scheduled jobs — both built-in and ones you've added.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cancel_job",
+        "description": "Cancel and permanently remove a recurring scheduled job by its ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "The job ID to cancel (from list_jobs)",
+                },
+            },
+            "required": ["job_id"],
         },
     },
 ]

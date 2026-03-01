@@ -3,9 +3,19 @@ from zoneinfo import ZoneInfo
 from config import settings
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(calendar_names: list[str] | None = None) -> str:
     tz = ZoneInfo(settings.agent_timezone)
     now = datetime.now(tz).strftime("%A, %B %-d %Y, %-I:%M %p %Z")
+    cal_names = calendar_names or []
+    if cal_names:
+        cal_list = ", ".join(cal_names)
+        cal_section = (
+            f". Available calendars: {cal_list}. "
+            "Route work/professional events to 'Work', personal/social/family events to 'Home'. "
+            "When the right calendar isn't obvious, use 'Home' as the default."
+        )
+    else:
+        cal_section = ""
 
     return f"""You are Roman — a personal assistant, thought partner, and trusted confidant.
 
@@ -29,7 +39,7 @@ You never say things like "Certainly!", "Great question!", "Absolutely!" or any 
 You have tools to take real action — not just talk about it:
 1. **Memory** — search past conversations and notes; save things worth keeping
 2. **Todoist** — list, add, update, complete, and delete tasks across projects
-3. **Calendar (Fantastical)** — see what's coming, add new events
+3. **Calendar (Fantastical)** — see what's coming, add new events with full alerts{cal_section}
 4. **Reminders** — schedule a message to yourself for a specific time
 
 When you use a tool, do it quietly — don't narrate every step. Just act and report what happened.

@@ -1,12 +1,8 @@
 """
 Calendar integration for Fantastical via iCloud CalDAV.
 
-Fantastical stores its data in Apple Calendar, which syncs via iCloud's
-CalDAV server. We connect directly to iCloud CalDAV so changes appear
-instantly in Fantastical on your Mac/iPhone.
-
-Also supports adding events via Fantastical's URL scheme (opens the app)
-as a fallback.
+Reads from ALL calendars, writes to the appropriate one based on context.
+Every event created includes the full default alert stack.
 """
 
 import logging
@@ -17,8 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import caldav
-from caldav.elements import dav
-from icalendar import Calendar, Event
+from icalendar import Calendar, Event, Alarm
 import uuid as uuid_lib
 
 from config import settings
@@ -27,12 +22,26 @@ logger = logging.getLogger(__name__)
 
 ICLOUD_CALDAV_URL = "https://caldav.icloud.com"
 
+# Default alert offsets (negative = before event)
+DEFAULT_ALERTS = [
+    timedelta(weeks=-2),    # 2 weeks before
+    timedelta(days=-7),     # 1 week before
+    timedelta(days=-3),     # 3 days before
+    timedelta(days=-1),     # 1 day before
+    timedelta(hours=-1),    # 1 hour before
+    timedelta(minutes=-15), # 15 minutes before
+]
+
+# Calendars to skip when reading (iCloud noise)
+SKIP_CALENDARS = {"reminders", "siri"}
+
 
 class CalendarClient:
     def __init__(self) -> None:
         self._tz = ZoneInfo(settings.agent_timezone)
         self._principal: caldav.Principal | None = None
-        self._calendar: caldav.Calendar | None = None
+        # All writable calendars by lowercase name
+        self._calendars: dict[str, caldav.Calendar] = {}
 
         if settings.use_icloud:
             self._connect()
@@ -45,21 +54,49 @@ class CalendarClient:
                 password=settings.icloud_app_password,
             )
             self._principal = client.principal()
-            # Pick the default calendar (usually "Home")
-            calendars = self._principal.calendars()
-            if not calendars:
+            all_cals = self._principal.calendars()
+            if not all_cals:
                 raise RuntimeError("No calendars found on iCloud account")
-            # Prefer a calendar named "Home" or just take the first
-            self._calendar = next(
-                (c for c in calendars if "home" in c.name.lower()),
-                calendars[0],
-            )
-            logger.info("Connected to iCloud CalDAV, using calendar: %s", self._calendar.name)
+
+            for c in all_cals:
+                name_lower = c.name.lower().strip()
+                if any(skip in name_lower for skip in SKIP_CALENDARS):
+                    continue
+                self._calendars[name_lower] = c
+
+            names = list(self._calendars.keys())
+            logger.info("Connected to iCloud CalDAV — calendars: %s", names)
         except Exception:
             logger.exception("Failed to connect to iCloud CalDAV")
 
     # ------------------------------------------------------------------
-    # Read
+    # Calendar lookup
+    # ------------------------------------------------------------------
+
+    def get_calendar(self, name: str | None = None) -> caldav.Calendar | None:
+        """
+        Return the caldav.Calendar for the given name (case-insensitive).
+        Falls back to 'home', then first available.
+        """
+        if not self._calendars:
+            return None
+        if name:
+            cal = self._calendars.get(name.lower().strip())
+            if cal:
+                return cal
+            # Fuzzy: find first calendar whose name contains the search term
+            for key, cal in self._calendars.items():
+                if name.lower() in key:
+                    return cal
+        # Default preference: home > first
+        return self._calendars.get("home") or next(iter(self._calendars.values()))
+
+    def calendar_names(self) -> list[str]:
+        """Return display names of all available calendars."""
+        return [c.name for c in self._calendars.values()]
+
+    # ------------------------------------------------------------------
+    # Read — all calendars
     # ------------------------------------------------------------------
 
     async def list_events(
@@ -67,26 +104,36 @@ class CalendarClient:
         start: datetime | None = None,
         end: datetime | None = None,
         days_ahead: int = 7,
+        calendar_name: str | None = None,
     ) -> list[dict]:
-        """Return events within a time range."""
-        if self._calendar is None:
+        """Return events across all calendars (or a specific one) within a time range."""
+        if not self._calendars:
             return []
 
         now = datetime.now(self._tz)
         start = start or now
         end = end or (now + timedelta(days=days_ahead))
 
-        try:
-            results = self._calendar.date_search(start=start, end=end, expand=True)
-            events = []
-            for vevent in results:
-                parsed = _parse_vevent(vevent.icalendar_component)
-                if parsed:
-                    events.append(parsed)
-            return sorted(events, key=lambda e: e["start"])
-        except Exception:
-            logger.exception("Failed to fetch calendar events")
-            return []
+        cals_to_search = (
+            [self.get_calendar(calendar_name)]
+            if calendar_name
+            else list(self._calendars.values())
+        )
+
+        events: list[dict] = []
+        for cal in cals_to_search:
+            if cal is None:
+                continue
+            try:
+                results = cal.date_search(start=start, end=end, expand=True)
+                for vevent in results:
+                    parsed = _parse_vevent(vevent.icalendar_component, cal.name)
+                    if parsed:
+                        events.append(parsed)
+            except Exception:
+                logger.debug("Failed to fetch events from %s", cal.name, exc_info=True)
+
+        return sorted(events, key=lambda e: e["start"] or "")
 
     async def get_today_events(self) -> list[dict]:
         now = datetime.now(self._tz)
@@ -105,18 +152,22 @@ class CalendarClient:
         end: datetime | None = None,
         description: str = "",
         location: str = "",
-        all_day: bool = False,
+        calendar_name: str | None = None,
     ) -> dict:
-        """Add an event to the calendar (syncs to Fantastical automatically)."""
-        if self._calendar is None:
-            # Fallback: open Fantastical via URL scheme
+        """
+        Add an event to a specific calendar (defaults to Home).
+        Includes the full default alert stack automatically.
+        Syncs to Fantastical immediately.
+        """
+        cal_obj = self.get_calendar(calendar_name)
+        if cal_obj is None:
             return self._add_via_url_scheme(title, start, end, description)
 
         if end is None:
             end = start + timedelta(hours=1)
 
         cal = Calendar()
-        cal.add("prodid", "-//Atlas Personal Assistant//EN")
+        cal.add("prodid", "-//Roman Personal Assistant//EN")
         cal.add("version", "2.0")
 
         event = Event()
@@ -130,13 +181,27 @@ class CalendarClient:
         if location:
             event.add("location", location)
 
+        # Add all default alerts
+        for offset in DEFAULT_ALERTS:
+            alarm = Alarm()
+            alarm.add("action", "DISPLAY")
+            alarm.add("description", title)
+            alarm.add("trigger", offset)
+            event.add_component(alarm)
+
         cal.add_component(event)
         ical_str = cal.to_ical().decode("utf-8")
 
         try:
-            self._calendar.add_event(ical_str)
-            logger.info("Added calendar event: %s at %s", title, start)
-            return {"title": title, "start": start.isoformat(), "end": end.isoformat()}
+            cal_obj.add_event(ical_str)
+            target = cal_obj.name
+            logger.info("Added event '%s' to '%s' at %s", title, target, start)
+            return {
+                "title": title,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "calendar": target,
+            }
         except Exception:
             logger.exception("CalDAV add_event failed, falling back to URL scheme")
             return self._add_via_url_scheme(title, start, end, description)
@@ -148,7 +213,7 @@ class CalendarClient:
         end: datetime | None,
         notes: str = "",
     ) -> dict:
-        """Open Fantastical with a pre-filled event (requires GUI, Mac only)."""
+        """Open Fantastical with a pre-filled event (Mac only, GUI fallback)."""
         params = {
             "title": title,
             "start": start.strftime("%Y-%m-%d %H:%M"),
@@ -156,15 +221,12 @@ class CalendarClient:
         }
         if end:
             params["end"] = end.strftime("%Y-%m-%d %H:%M")
-
         query = urllib.parse.urlencode(params)
         url = f"fantastical2://x-callback-url/add?{query}"
         try:
             subprocess.Popen(["open", url])
-            logger.info("Opened Fantastical URL scheme for: %s", title)
         except Exception:
             logger.exception("Failed to open Fantastical URL scheme")
-
         return {"title": title, "start": start.isoformat(), "method": "url_scheme"}
 
     # ------------------------------------------------------------------
@@ -177,26 +239,19 @@ class CalendarClient:
         lines = []
         for e in events:
             start_str = e.get("start_formatted", e.get("start", "?"))
-            lines.append(f"- {e['title']} @ {start_str}")
+            cal_tag = f" [{e['calendar']}]" if e.get("calendar") else ""
+            line = f"- {e['title']} @ {start_str}{cal_tag}"
             if e.get("location"):
-                lines[-1] += f" [{e['location']}]"
+                line += f" ({e['location']})"
+            lines.append(line)
         return "\n".join(lines)
-
-    async def list_available_calendars(self) -> list[str]:
-        if self._principal is None:
-            return []
-        try:
-            return [c.name for c in self._principal.calendars()]
-        except Exception:
-            return []
 
 
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
 
-def _parse_vevent(component: Any) -> dict | None:
-    """Extract a flat dict from an icalendar VEVENT component."""
+def _parse_vevent(component: Any, calendar_name: str = "") -> dict | None:
     try:
         for sub in component.walk():
             if sub.name != "VEVENT":
@@ -211,6 +266,7 @@ def _parse_vevent(component: Any) -> dict | None:
                 "location": str(sub.get("location", "")),
                 "description": str(sub.get("description", "")),
                 "uid": str(sub.get("uid", "")),
+                "calendar": calendar_name,
             }
     except Exception:
         logger.debug("Could not parse vevent", exc_info=True)

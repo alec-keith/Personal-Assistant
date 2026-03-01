@@ -46,6 +46,7 @@ class AgentCore:
         self._todoist = todoist
         self._calendar = calendar
         self._schedule_reminder = schedule_reminder_fn
+        self._scheduler = None  # injected from main.py after creation
         self._history: list[dict] = []
         self._tz = ZoneInfo(settings.agent_timezone)
 
@@ -82,7 +83,7 @@ class AgentCore:
             response = await self._client.messages.create(
                 model=settings.claude_model,
                 max_tokens=4096,
-                system=build_system_prompt(),
+                system=build_system_prompt(self._calendar.calendar_names()),
                 tools=TOOLS,
                 messages=messages,
             )
@@ -204,8 +205,17 @@ class AgentCore:
             return "\n".join(lines) if lines else "No projects found."
 
         # --- Calendar ---
+        if name == "list_calendars":
+            names = self._calendar.calendar_names()
+            if not names:
+                return "No calendars available."
+            return "Available calendars: " + ", ".join(names)
+
         if name == "list_events":
-            events = await self._calendar.list_events(days_ahead=inputs.get("days_ahead", 7))
+            events = await self._calendar.list_events(
+                days_ahead=inputs.get("days_ahead", 7),
+                calendar_name=inputs.get("calendar_name"),
+            )
             return self._calendar.format_events_summary(events)
 
         if name == "get_today_events":
@@ -224,18 +234,41 @@ class AgentCore:
                 end=end,
                 description=inputs.get("description", ""),
                 location=inputs.get("location", ""),
+                calendar_name=inputs.get("calendar_name"),
             )
-            return f"Event added: '{result['title']}' at {result['start']}"
+            cal = result.get("calendar", "")
+            cal_tag = f" [{cal}]" if cal else ""
+            return f"Event added: '{result['title']}' at {result['start']}{cal_tag}"
 
         # --- Scheduling ---
         if name == "schedule_reminder":
-            if self._schedule_reminder is None:
+            if self._scheduler is None:
                 return "Scheduler not available."
-            when = datetime.fromisoformat(inputs["when_iso"]).replace(
-                tzinfo=self._tz
-            )
-            await self._schedule_reminder(inputs["message"], when)
+            when = datetime.fromisoformat(inputs["when_iso"]).replace(tzinfo=self._tz)
+            await self._scheduler.schedule_reminder(inputs["message"], when)
             return f"Reminder scheduled for {when.strftime('%a %b %-d at %-I:%M %p')}"
+
+        if name == "schedule_recurring":
+            if self._scheduler is None:
+                return "Scheduler not available."
+            return await self._scheduler.add_recurring_job(
+                job_id=inputs["job_id"],
+                message=inputs["message"],
+                description=inputs["description"],
+                interval_minutes=inputs.get("interval_minutes"),
+                cron=inputs.get("cron"),
+                end_date=inputs.get("end_date"),
+            )
+
+        if name == "list_jobs":
+            if self._scheduler is None:
+                return "Scheduler not available."
+            return self._scheduler.list_jobs()
+
+        if name == "cancel_job":
+            if self._scheduler is None:
+                return "Scheduler not available."
+            return self._scheduler.cancel_job(inputs["job_id"])
 
         return f"Unknown tool: {name}"
 

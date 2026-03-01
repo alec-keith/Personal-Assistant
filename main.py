@@ -121,7 +121,7 @@ async def main() -> None:
         logger.error("No gateway available to send proactive message")
 
     scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar)
-    agent._schedule_reminder = scheduler.schedule_reminder
+    agent._scheduler = scheduler  # give agent full scheduler access
     scheduler.start()
 
     logger.info("%s is online.", settings.agent_name)

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     bluebubbles_password: str = ""      # BB server password
     bluebubbles_imessage_handle: str = ""  # your phone number or Apple ID email
 
+    # Groq (Whisper transcription — free tier)
+    groq_api_key: str = ""
+
     # Todoist
     todoist_api_token: str
 
