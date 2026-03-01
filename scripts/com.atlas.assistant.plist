@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.atlas.assistant</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Update this path if your project is elsewhere -->
+        <string>/Users/aleckeith/personal-assistant/.venv/bin/python</string>
+        <string>/Users/aleckeith/personal-assistant/main.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/aleckeith/personal-assistant</string>
+
+    <!-- Restart automatically if it crashes -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Start on login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/aleckeith/personal-assistant/logs/atlas.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/aleckeith/personal-assistant/logs/atlas.error.log</string>
+
+    <!-- Throttle restarts -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

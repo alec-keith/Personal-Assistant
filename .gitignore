@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+data/memory/
+logs/
+*.log
+.DS_Store
+config/google_credentials.json
