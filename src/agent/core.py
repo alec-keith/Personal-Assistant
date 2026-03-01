@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Awaitable
+from typing import Callable, Awaitable
 from zoneinfo import ZoneInfo
 
 import anthropic

@@ -131,8 +131,8 @@ class ProactiveScheduler:
     async def _evening_wrapup(self) -> None:
         """End-of-day nudge: what's still open?"""
         try:
-            tasks = await self._todoist.get_today_tasks()
-            incomplete = [t for t in tasks if not t.get("is_completed")]
+            # REST API only returns incomplete tasks, so this is the full open list
+            incomplete = await self._todoist.get_today_tasks()
 
             if not incomplete:
                 await self._send("🌇 **Evening check-in:** All done for today — great work!")
