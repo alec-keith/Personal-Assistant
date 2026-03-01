@@ -1,104 +1,123 @@
 """
-ChromaDB-backed vector memory store.
+PostgreSQL-backed memory store with full-text search.
 
-Two collections:
-  - "conversations": rolling window of message summaries
-  - "notes": explicit notes/brain-dumps the user asks to remember
+Two tables:
+  - conversations: rolling summaries of past exchanges
+  - notes: explicit notes the user asks Roman to remember
+
+If no database is configured (DATABASE_URL empty), all operations are
+silent no-ops so the bot still runs without memory.
 """
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Literal
 
-import chromadb
-from chromadb.utils import embedding_functions
-
-from config import settings
+from .database import Database
 
 logger = logging.getLogger(__name__)
 
-CollectionName = Literal["conversations", "notes"]
-
 
 class MemoryStore:
-    def __init__(self) -> None:
-        self._client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
-        ef = embedding_functions.DefaultEmbeddingFunction()
+    def __init__(self, db: Database | None = None) -> None:
+        self._db = db
 
-        self._conversations = self._client.get_or_create_collection(
-            "conversations", embedding_function=ef
-        )
-        self._notes = self._client.get_or_create_collection(
-            "notes", embedding_function=ef
-        )
-        logger.info("Memory store ready at %s", settings.chroma_persist_dir)
+    @property
+    def _available(self) -> bool:
+        return self._db is not None
 
     # ------------------------------------------------------------------
     # Conversations
     # ------------------------------------------------------------------
 
-    def save_conversation_summary(self, summary: str, metadata: dict | None = None) -> str:
-        """Persist a summary of a conversation turn."""
+    async def save_conversation_summary(self, summary: str, metadata: dict | None = None) -> str:
+        if not self._available:
+            return ""
         doc_id = str(uuid.uuid4())
-        self._conversations.add(
-            ids=[doc_id],
-            documents=[summary],
-            metadatas=[{
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                **(metadata or {}),
-            }],
-        )
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO conversations (id, content, metadata) VALUES ($1, $2, $3::jsonb)",
+                doc_id,
+                summary,
+                str(metadata or {}),
+            )
         return doc_id
 
-    def search_conversations(self, query: str, n: int = 5) -> list[str]:
-        """Retrieve the most relevant past conversation summaries."""
-        if self._conversations.count() == 0:
+    async def search_conversations(self, query: str, n: int = 5) -> list[str]:
+        if not self._available:
             return []
-        results = self._conversations.query(
-            query_texts=[query],
-            n_results=min(n, self._conversations.count()),
-        )
-        return results["documents"][0] if results["documents"] else []
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT content FROM conversations
+                WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+                ORDER BY ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) DESC
+                LIMIT $2
+                """,
+                query, n,
+            )
+            if not rows:
+                rows = await conn.fetch(
+                    "SELECT content FROM conversations ORDER BY created_at DESC LIMIT $1", n
+                )
+        return [r["content"] for r in rows]
 
     # ------------------------------------------------------------------
     # Notes / explicit memories
     # ------------------------------------------------------------------
 
-    def save_note(self, note: str, tags: list[str] | None = None) -> str:
-        """Explicitly store something the user wants remembered."""
+    async def save_note(self, note: str, tags: list[str] | None = None) -> str:
+        if not self._available:
+            return ""
         doc_id = str(uuid.uuid4())
-        self._notes.add(
-            ids=[doc_id],
-            documents=[note],
-            metadatas=[{
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "tags": ",".join(tags or []),
-            }],
-        )
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO notes (id, content, tags) VALUES ($1, $2, $3)",
+                doc_id, note, tags or [],
+            )
         logger.info("Saved note: %s…", note[:60])
         return doc_id
 
-    def search_notes(self, query: str, n: int = 5) -> list[str]:
-        """Retrieve notes relevant to a query."""
-        if self._notes.count() == 0:
+    async def search_notes(self, query: str, n: int = 5) -> list[str]:
+        if not self._available:
             return []
-        results = self._notes.query(
-            query_texts=[query],
-            n_results=min(n, self._notes.count()),
-        )
-        return results["documents"][0] if results["documents"] else []
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT content FROM notes
+                WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+                ORDER BY ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) DESC
+                LIMIT $2
+                """,
+                query, n,
+            )
+            if not rows:
+                rows = await conn.fetch(
+                    "SELECT content FROM notes ORDER BY created_at DESC LIMIT $1", n
+                )
+        return [r["content"] for r in rows]
 
-    def list_recent_notes(self, limit: int = 10) -> list[dict]:
-        """Return the most recent notes (for display purposes)."""
-        result = self._notes.get(
-            limit=limit,
-            include=["documents", "metadatas"],
-        )
-        items = []
-        for doc, meta in zip(result["documents"], result["metadatas"]):
-            items.append({"content": doc, "metadata": meta})
-        return sorted(items, key=lambda x: x["metadata"].get("timestamp", ""), reverse=True)
+    async def list_recent_notes(self, limit: int = 10) -> list[dict]:
+        if not self._available:
+            return []
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, content, tags, created_at FROM notes ORDER BY created_at DESC LIMIT $1",
+                limit,
+            )
+        return [
+            {
+                "id": str(r["id"]),
+                "content": r["content"],
+                "metadata": {
+                    "timestamp": r["created_at"].isoformat(),
+                    "tags": ",".join(r["tags"] or []),
+                },
+            }
+            for r in rows
+        ]
 
-    def delete_note(self, doc_id: str) -> None:
-        self._notes.delete(ids=[doc_id])
+    async def delete_note(self, doc_id: str) -> None:
+        if not self._available:
+            return
+        async with self._db.pool.acquire() as conn:
+            await conn.execute("DELETE FROM notes WHERE id = $1::uuid", doc_id)

@@ -5,10 +5,9 @@ Three modes:
 1. One-shot reminders: scheduled at a specific datetime ("remind me at 3pm")
 2. Built-in periodic jobs: morning briefing, evening wrap-up, overdue nudge
 3. Dynamic recurring jobs: Roman can add/cancel these at runtime and they persist
-   across restarts via data/recurring_jobs.json
+   across restarts via the PostgreSQL recurring_jobs table (or JSON fallback)
 """
 
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -28,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 SendFn = Callable[[str], Awaitable[None]]
 
+# JSON fallback used when no database is available
 JOBS_FILE = Path("data/recurring_jobs.json")
 
 
@@ -37,14 +37,18 @@ class ProactiveScheduler:
         send_fn: SendFn,
         todoist: TodoistClient,
         calendar: CalendarClient,
+        db=None,  # src.memory.database.Database | None
     ) -> None:
         self._send = send_fn
         self._todoist = todoist
         self._calendar = calendar
+        self._db = db
         self._scheduler = AsyncIOScheduler(timezone=settings.agent_timezone)
-        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
         self._setup_builtin_jobs()
-        self._load_persistent_jobs()
+
+    async def initialize(self) -> None:
+        """Load persistent jobs. Call this after the event loop is running."""
+        await self._load_persistent_jobs()
 
     def start(self) -> None:
         self._scheduler.start()
@@ -58,7 +62,6 @@ class ProactiveScheduler:
     # ------------------------------------------------------------------
 
     async def schedule_reminder(self, message: str, when: datetime) -> None:
-        """Schedule a one-shot reminder at a specific datetime."""
         job_id = f"reminder_{when.isoformat()}"
         self._scheduler.add_job(
             self._send_reminder,
@@ -82,14 +85,6 @@ class ProactiveScheduler:
         cron: str | None = None,
         end_date: str | None = None,
     ) -> str:
-        """
-        Add a new recurring job that persists across restarts.
-
-        Provide either:
-          interval_minutes: run every N minutes (e.g. 180 for every 3 hours)
-          cron: standard 5-field cron string (e.g. "0 18 * * mon,fri")
-          end_date: ISO date string to stop after (e.g. "2026-03-07" for end of week)
-        """
         if not interval_minutes and not cron:
             return "Error: provide either interval_minutes or a cron expression."
 
@@ -135,11 +130,7 @@ class ProactiveScheduler:
             kwargs={"message": message},
         )
 
-        # Persist to file
-        jobs = self._read_jobs_file()
-        jobs = [j for j in jobs if j["id"] != full_id]
-        jobs.append(job_def)
-        JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+        await self._persist_job(job_def)
 
         next_run = self._scheduler.get_job(full_id)
         next_str = ""
@@ -148,7 +139,7 @@ class ProactiveScheduler:
         logger.info("Added dynamic job '%s': %s", full_id, description)
         return f"Scheduled: {description}{next_str}"
 
-    def cancel_job(self, job_id: str) -> str:
+    async def cancel_job(self, job_id: str) -> str:
         """Remove a dynamic recurring job by ID."""
         full_id = f"custom_{job_id}" if not job_id.startswith("custom_") else job_id
 
@@ -159,12 +150,9 @@ class ProactiveScheduler:
         except Exception:
             pass
 
-        jobs = self._read_jobs_file()
-        new_jobs = [j for j in jobs if j["id"] != full_id]
-        removed_file = len(new_jobs) < len(jobs)
-        JOBS_FILE.write_text(json.dumps(new_jobs, indent=2))
+        removed_db = await self._delete_job(full_id)
 
-        if removed_scheduler or removed_file:
+        if removed_scheduler or removed_db:
             return f"Cancelled job: {full_id}"
         return f"No job found with id '{job_id}'."
 
@@ -190,19 +178,86 @@ class ProactiveScheduler:
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # Internal
+    # Persistence — PostgreSQL preferred, JSON file fallback
     # ------------------------------------------------------------------
 
-    def _read_jobs_file(self) -> list[dict]:
-        if not JOBS_FILE.exists():
-            return []
-        try:
-            return json.loads(JOBS_FILE.read_text())
-        except Exception:
-            return []
+    async def _persist_job(self, job_def: dict) -> None:
+        if self._db is not None:
+            try:
+                async with self._db.pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        INSERT INTO recurring_jobs
+                            (id, message, description, trigger_type, trigger_args, end_date)
+                        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+                        ON CONFLICT (id) DO UPDATE SET
+                            message=EXCLUDED.message,
+                            description=EXCLUDED.description,
+                            trigger_type=EXCLUDED.trigger_type,
+                            trigger_args=EXCLUDED.trigger_args,
+                            end_date=EXCLUDED.end_date
+                        """,
+                        job_def["id"],
+                        job_def["message"],
+                        job_def["description"],
+                        job_def["trigger_type"],
+                        json.dumps(job_def["trigger_args"]),
+                        job_def.get("end_date"),
+                    )
+                return
+            except Exception:
+                logger.exception("Failed to persist job to DB, falling back to JSON")
 
-    def _load_persistent_jobs(self) -> None:
+        # JSON fallback
         jobs = self._read_jobs_file()
+        jobs = [j for j in jobs if j["id"] != job_def["id"]]
+        jobs.append(job_def)
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+
+    async def _delete_job(self, full_id: str) -> bool:
+        if self._db is not None:
+            try:
+                async with self._db.pool.acquire() as conn:
+                    result = await conn.execute(
+                        "DELETE FROM recurring_jobs WHERE id = $1", full_id
+                    )
+                return result.split()[-1] != "0"
+            except Exception:
+                logger.exception("Failed to delete job from DB")
+
+        # JSON fallback
+        jobs = self._read_jobs_file()
+        new_jobs = [j for j in jobs if j["id"] != full_id]
+        removed = len(new_jobs) < len(jobs)
+        if JOBS_FILE.exists():
+            JOBS_FILE.write_text(json.dumps(new_jobs, indent=2))
+        return removed
+
+    async def _load_persistent_jobs(self) -> None:
+        jobs: list[dict] = []
+
+        if self._db is not None:
+            try:
+                async with self._db.pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT * FROM recurring_jobs")
+                jobs = [
+                    {
+                        "id": r["id"],
+                        "message": r["message"],
+                        "description": r["description"],
+                        "trigger_type": r["trigger_type"],
+                        "trigger_args": dict(r["trigger_args"]),
+                        "end_date": r["end_date"],
+                    }
+                    for r in rows
+                ]
+            except Exception:
+                logger.exception("Failed to load jobs from DB, falling back to JSON")
+
+        if not jobs:
+            jobs = self._read_jobs_file()
+
         for job_def in jobs:
             try:
                 end_date = job_def.get("end_date")
@@ -227,8 +282,21 @@ class ProactiveScheduler:
                 )
             except Exception:
                 logger.exception("Failed to load persistent job %s", job_def.get("id"))
+
         if jobs:
             logger.info("Loaded %d persistent recurring jobs", len(jobs))
+
+    def _read_jobs_file(self) -> list[dict]:
+        if not JOBS_FILE.exists():
+            return []
+        try:
+            return json.loads(JOBS_FILE.read_text())
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
+    # Internal job handlers
+    # ------------------------------------------------------------------
 
     async def _dynamic_checkin(self, message: str) -> None:
         await self._send(message)

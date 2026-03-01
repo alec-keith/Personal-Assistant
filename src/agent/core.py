@@ -151,21 +151,21 @@ class AgentCore:
             collection = inputs.get("collection", "both")
             results = []
             if collection in ("conversations", "both"):
-                convs = self._memory.search_conversations(query)
+                convs = await self._memory.search_conversations(query)
                 if convs:
                     results.append("Past conversations:\n" + "\n---\n".join(convs))
             if collection in ("notes", "both"):
-                notes = self._memory.search_notes(query)
+                notes = await self._memory.search_notes(query)
                 if notes:
                     results.append("Saved notes:\n" + "\n---\n".join(notes))
             return "\n\n".join(results) if results else "No relevant memories found."
 
         if name == "save_note":
-            doc_id = self._memory.save_note(inputs["note"], inputs.get("tags"))
+            doc_id = await self._memory.save_note(inputs["note"], inputs.get("tags"))
             return f"Note saved (id={doc_id})"
 
         if name == "list_recent_notes":
-            notes = self._memory.list_recent_notes(inputs.get("limit", 10))
+            notes = await self._memory.list_recent_notes(inputs.get("limit", 10))
             if not notes:
                 return "No notes saved yet."
             lines = [f"- [{n['metadata'].get('timestamp', '?')[:10]}] {n['content']}" for n in notes]
@@ -268,7 +268,7 @@ class AgentCore:
         if name == "cancel_job":
             if self._scheduler is None:
                 return "Scheduler not available."
-            return self._scheduler.cancel_job(inputs["job_id"])
+            return await self._scheduler.cancel_job(inputs["job_id"])
 
         return f"Unknown tool: {name}"
 
@@ -298,6 +298,6 @@ class AgentCore:
                 }],
             )
             summary = summary_response.content[0].text
-            self._memory.save_conversation_summary(summary)
+            await self._memory.save_conversation_summary(summary)
         except Exception:
             logger.debug("Failed to save conversation summary", exc_info=True)

@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     google_calendar_credentials_path: str = ""
     google_calendar_id: str = "primary"
 
-    # Memory
-    chroma_persist_dir: str = str(ROOT_DIR / "data" / "memory")
+    # Memory (PostgreSQL — Railway auto-injects DATABASE_URL via Postgres plugin)
+    database_url: str = ""
 
     # Agent
     agent_name: str = "Atlas"

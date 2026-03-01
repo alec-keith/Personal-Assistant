@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import settings
+from src.memory.database import Database
 from src.memory.store import MemoryStore
 from src.integrations.todoist import TodoistClient
 from src.integrations.calendar import CalendarClient
@@ -59,8 +60,19 @@ def build_app() -> FastAPI:
 async def main() -> None:
     logger.info("Starting %s...", settings.agent_name)
 
+    # -- Database (PostgreSQL) --
+    db: Database | None = None
+    if settings.database_url:
+        db = Database(settings.database_url)
+        await db.initialize()
+    else:
+        logger.warning(
+            "DATABASE_URL not set — memory disabled. "
+            "Add a Postgres plugin in Railway and it will be injected automatically."
+        )
+
     # -- Shared resources --
-    memory = MemoryStore()
+    memory = MemoryStore(db=db)
     todoist = TodoistClient()
     calendar = CalendarClient()
 
@@ -120,8 +132,9 @@ async def main() -> None:
 
         logger.error("No gateway available to send proactive message")
 
-    scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar)
+    scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar, db=db)
     agent._scheduler = scheduler  # give agent full scheduler access
+    await scheduler.initialize()  # load persistent jobs from DB
     scheduler.start()
 
     logger.info("%s is online.", settings.agent_name)
@@ -153,6 +166,8 @@ async def main() -> None:
         scheduler.shutdown()
         for task in tasks:
             task.cancel()
+        if db:
+            await db.close()
 
 
 if __name__ == "__main__":
