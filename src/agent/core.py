@@ -92,7 +92,12 @@ class AgentCore:
             raw_loc = _loc_match.group(1).lower().strip()
             location = "home" if "home" in raw_loc else raw_loc.replace("the ", "")
             reminder_text = _loc_match.group(2).strip().rstrip(".")
-            await self._memory.save_note(reminder_text, tags=[f"location:{location}"])
+            logger.info("Location reminder fast-path: loc=%s task=%r", location, reminder_text)
+            try:
+                await self._memory.save_note(reminder_text, tags=[f"location:{location}"])
+                logger.info("Location reminder saved successfully")
+            except Exception:
+                logger.exception("Location reminder save_note failed")
             return f"Got it — I'll remind you to {reminder_text} when you get {location}."
 
         # Images always need the complex model; voice always uses the fast model;
