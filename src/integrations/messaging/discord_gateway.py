@@ -64,7 +64,7 @@ class SilenceDetectingSink(discord.sinks.Sink):
     loop handles processing — no locking needed.
     """
 
-    SILENCE_SECS = 1.2   # seconds of no packets → end of utterance
+    SILENCE_SECS = 0.6   # seconds of no packets → end of utterance (lowered for faster response)
     MIN_SECS = 0.4       # minimum utterance length (ignores blips)
     SAMPLE_RATE = 48000  # Discord native rate
     CHANNELS = 2         # stereo
@@ -162,7 +162,7 @@ class DiscordGateway(MessagingGateway):
         self._speak_in_voice: bool = False
         self._sink: SilenceDetectingSink | None = None
         self._listen_task: asyncio.Task | None = None
-        self._is_busy: bool = False  # prevent overlapping responses
+        self._utterance_task: asyncio.Task | None = None  # current response task, cancelled on interrupt
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -338,10 +338,20 @@ class DiscordGateway(MessagingGateway):
 
     async def _on_voice_utterance(self, wav_bytes: bytes) -> None:
         """Called by the listen loop when the user finishes speaking."""
-        if self._is_busy:
-            return
+        # Interrupt any ongoing response — stop playback and cancel the task
+        if self._utterance_task and not self._utterance_task.done():
+            if self._voice_client and self._voice_client.is_playing():
+                self._voice_client.stop()
+            self._utterance_task.cancel()
+            try:
+                await asyncio.wait_for(self._utterance_task, timeout=0.3)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
 
-        self._is_busy = True
+        self._utterance_task = asyncio.create_task(self._process_utterance(wav_bytes))
+
+    async def _process_utterance(self, wav_bytes: bytes) -> None:
+        """Transcribe, get response, speak — runs as a cancellable task."""
         try:
             text = await transcribe_bytes(wav_bytes, "voice.wav")
             if not text or len(text.strip()) < 3:
@@ -349,7 +359,6 @@ class DiscordGateway(MessagingGateway):
 
             logger.info("Voice utterance: %s", text[:80])
 
-            # Echo transcription to text channel
             channel = self._text_channel or self._dm_channel
             if channel:
                 await channel.send(f"🎙 _{text}_")
@@ -362,10 +371,10 @@ class DiscordGateway(MessagingGateway):
 
             await self._play_tts(response)
 
+        except asyncio.CancelledError:
+            raise  # propagate so the task is properly marked cancelled
         except Exception:
             logger.exception("Voice utterance handling failed")
-        finally:
-            self._is_busy = False
 
     # ------------------------------------------------------------------
     # Audio attachment handler
@@ -475,8 +484,8 @@ class DiscordGateway(MessagingGateway):
     async def _play_tts(self, text: str) -> None:
         """
         Split response into sentences, generate TTS for all in parallel,
-        then play them back-to-back. First sentence starts playing as soon
-        as its audio is ready rather than waiting for the full response.
+        then play them back-to-back. Cancellation stops playback immediately
+        and cleans up any unplayed audio files.
         """
         if not self._voice_client or not self._voice_client.is_connected():
             return
@@ -489,12 +498,24 @@ class DiscordGateway(MessagingGateway):
         audio_paths = await asyncio.gather(
             *[synthesize(s) for s in sentences], return_exceptions=True
         )
+        valid_paths = [p for p in audio_paths if not isinstance(p, Exception) and p is not None]
 
-        # Play back sequentially, skip any that failed
-        for path in audio_paths:
-            if isinstance(path, Exception) or path is None:
-                continue
-            await self._play_audio_file(path)
+        played = 0
+        try:
+            for path in valid_paths:
+                await self._play_audio_file(path)
+                played += 1
+        except asyncio.CancelledError:
+            if self._voice_client and self._voice_client.is_playing():
+                self._voice_client.stop()
+            raise
+        finally:
+            # Clean up any audio files that were never played
+            for path in valid_paths[played:]:
+                try:
+                    path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     async def _play_audio_file(self, audio_path: Path) -> None:
         if not self._voice_client or not self._voice_client.is_connected():
