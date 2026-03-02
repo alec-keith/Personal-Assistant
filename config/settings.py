@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # Tavily (web search + page fetch)
     tavily_api_key: str = ""
 
+    # NewsAPI (news headlines — free 100 req/day at newsapi.org)
+    newsapi_key: str = ""
+
+    # Default location for weather (no key needed — Open-Meteo is free)
+    user_location: str = "New York"
+
     # Agent
     agent_name: str = "Atlas"
     agent_timezone: str = "America/New_York"

@@ -288,6 +288,23 @@ class AgentCore:
                 return "Scheduler not available."
             return await self._scheduler.cancel_job(inputs["job_id"])
 
+        # --- Weather / News / Stocks ---
+        if name == "get_weather":
+            from src.integrations.weather import get_weather
+            return await get_weather(inputs["location"], inputs.get("days", 3))
+
+        if name == "get_news":
+            from src.integrations.news import get_news
+            return await get_news(
+                settings.newsapi_key,
+                topic=inputs.get("topic", "top"),
+                count=inputs.get("count", 8),
+            )
+
+        if name == "get_stock_quotes":
+            from src.integrations.stocks import get_stock_quotes
+            return await get_stock_quotes(inputs["symbols"])
+
         # --- Web ---
         if name == "web_search":
             return await self._web_search(inputs["query"], inputs.get("max_results", 5))

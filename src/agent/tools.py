@@ -225,6 +225,68 @@ TOOLS: list[dict] = [
             "required": ["title", "start_iso"],
         },
     },
+    # ------------------------------------------------------------------ Weather / News / Stocks
+    {
+        "name": "get_weather",
+        "description": (
+            "Get current weather conditions and a multi-day forecast for any location. "
+            "Use this for any weather-related question."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City name, e.g. 'New York', 'Miami', 'London'",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Number of forecast days (1-7, default 3)",
+                    "default": 3,
+                },
+            },
+            "required": ["location"],
+        },
+    },
+    {
+        "name": "get_news",
+        "description": (
+            "Fetch the latest news headlines. "
+            "topic options: 'top' (top US headlines), 'ai' (AI/ML news), "
+            "'business' (business headlines), 'investing' (markets/stocks news), "
+            "'technology' (tech headlines), or any custom search term."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "Topic or search query. Options: top, ai, business, investing, technology, or custom.",
+                    "default": "top",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of articles to return (default 8)",
+                    "default": 8,
+                },
+            },
+        },
+    },
+    {
+        "name": "get_stock_quotes",
+        "description": "Get current stock price and day change for one or more ticker symbols.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of ticker symbols, e.g. ['AAPL', 'TSLA', 'SPY']",
+                },
+            },
+            "required": ["symbols"],
+        },
+    },
     # ------------------------------------------------------------------ Web
     {
         "name": "web_search",
