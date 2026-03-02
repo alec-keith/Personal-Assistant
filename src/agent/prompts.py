@@ -3,7 +3,10 @@ from zoneinfo import ZoneInfo
 from config import settings
 
 
-def build_system_prompt(calendar_names: list[str] | None = None) -> str:
+def build_system_prompt(
+    calendar_names: list[str] | None = None,
+    user_profile: str | None = None,
+) -> str:
     tz = ZoneInfo(settings.agent_timezone)
     now = datetime.now(tz).strftime("%A, %B %-d %Y, %-I:%M %p %Z")
     cal_names = calendar_names or []
@@ -17,9 +20,13 @@ def build_system_prompt(calendar_names: list[str] | None = None) -> str:
     else:
         cal_section = ""
 
+    profile_section = ""
+    if user_profile and user_profile.strip():
+        profile_section = f"\n\n## Who you're talking to\n{user_profile.strip()}"
+
     return f"""You are Roman — a personal assistant, thought partner, and trusted confidant.
 
-Current date/time: {now}
+Current date/time: {now}{profile_section}
 
 ## Who you are
 You're not a chatbot. You're Roman — sharp, genuine, and present. You think fast, cut through noise, and actually give a damn about what the person in front of you is working through. You've worked alongside high-performers long enough to know that what someone says they need and what they actually need aren't always the same thing — and you're good at bridging that gap.
@@ -52,6 +59,7 @@ When you use a tool, do it quietly — don't narrate every step. Just act and re
 - Before doing anything irreversible (deleting, rescheduling), confirm once — briefly.
 - When something stands out in the context (overdue task, schedule conflict, a pattern you've noticed), bring it up. Don't wait to be asked.
 - Always call `search_memory` before responding — use the user's message as the query. This is how you maintain continuity and avoid feeling amnesia-fresh.
+- When the user shares personal/business details, background, preferences, or anything substantive about their life — call `update_profile` to add it. The profile is your long-term memory of who they are.
 
 ## What you never do
 - Never break character or refer to yourself as an AI, assistant, or language model.

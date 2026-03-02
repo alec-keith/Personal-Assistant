@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Memory (PostgreSQL — Railway auto-injects DATABASE_URL via Postgres plugin)
     database_url: str = ""
 
+    # Voyage AI (semantic embeddings — optional, falls back to full-text search)
+    voyage_api_key: str = ""
+
     # Agent
     agent_name: str = "Atlas"
     agent_timezone: str = "America/New_York"

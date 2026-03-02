@@ -55,6 +55,37 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "get_profile",
+        "description": (
+            "Read the full user profile document — a living record of who the user is: "
+            "their background, business, relationships, goals, preferences, and context. "
+            "This is always pre-loaded into your context, so only call this if you think "
+            "the profile may have been updated mid-conversation and you need the latest version."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "update_profile",
+        "description": (
+            "Update the user profile document with new information you've learned. "
+            "ALWAYS call this after brain dumps, major revelations, or any time the user "
+            "shares substantive personal/business details you should remember forever. "
+            "This is a full replacement — write the complete updated profile each time. "
+            "Organise by section: Personal, Business, Goals, Relationships, Preferences, etc. "
+            "Keep it dense with facts. No filler."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The complete updated profile document (replaces existing)",
+                },
+            },
+            "required": ["content"],
+        },
+    },
     # ------------------------------------------------------------------ Todoist
     {
         "name": "list_tasks",

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Short-term in-memory conversation history (per session, not persisted)
 # Each item: {"role": "user"|"assistant", "content": str|list}
-MAX_HISTORY = 20  # messages kept in context window
+MAX_HISTORY = 20  # messages kept in context window (older turns are recalled via memory search)
 
 
 class AgentCore:
@@ -49,6 +49,7 @@ class AgentCore:
         self._scheduler = None  # injected from main.py after creation
         self._history: list[dict] = []
         self._tz = ZoneInfo(settings.agent_timezone)
+        self._user_profile: str = ""  # cached from DB; refreshed on each message + after update
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -56,6 +57,9 @@ class AgentCore:
 
     async def handle_message(self, user_text: str) -> str:
         """Process one user message and return the assistant's reply."""
+        # Refresh profile cache on each message (cheap DB call, ensures freshness)
+        self._user_profile = await self._memory.get_profile()
+
         self._history.append({"role": "user", "content": user_text})
         self._trim_history()
 
@@ -83,7 +87,7 @@ class AgentCore:
             response = await self._client.messages.create(
                 model=settings.claude_model,
                 max_tokens=4096,
-                system=build_system_prompt(self._calendar.calendar_names()),
+                system=build_system_prompt(self._calendar.calendar_names(), self._user_profile),
                 tools=TOOLS,
                 messages=messages,
             )
@@ -144,6 +148,16 @@ class AgentCore:
 
     async def _call_tool(self, name: str, inputs: dict, tool_id: str) -> str:
         logger.info("Calling tool: %s(%s)", name, json.dumps(inputs)[:120])
+
+        # --- Profile ---
+        if name == "get_profile":
+            profile = await self._memory.get_profile()
+            return profile if profile else "No profile saved yet."
+
+        if name == "update_profile":
+            await self._memory.update_profile(inputs["content"])
+            self._user_profile = inputs["content"]  # update cache immediately
+            return "Profile updated."
 
         # --- Memory ---
         if name == "search_memory":

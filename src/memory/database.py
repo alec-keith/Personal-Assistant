@@ -13,19 +13,22 @@ logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS conversations (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     content     TEXT        NOT NULL,
     metadata    JSONB       NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    embedding   vector(1024)
 );
 
 CREATE TABLE IF NOT EXISTS notes (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     content     TEXT        NOT NULL,
     tags        TEXT[]      NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    embedding   vector(1024)
 );
 
 CREATE TABLE IF NOT EXISTS recurring_jobs (
@@ -36,6 +39,26 @@ CREATE TABLE IF NOT EXISTS recurring_jobs (
     trigger_args JSONB       NOT NULL,
     end_date     TEXT
 );
+
+CREATE TABLE IF NOT EXISTS user_profile (
+    id          INTEGER     PRIMARY KEY DEFAULT 1,
+    content     TEXT        NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Ensure exactly one profile row exists
+INSERT INTO user_profile (id, content) VALUES (1, '') ON CONFLICT DO NOTHING;
+
+-- Migrate existing tables (safe to run repeatedly — IF NOT EXISTS)
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS embedding vector(1024);
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS embedding vector(1024);
+
+-- HNSW indexes for vector similarity search (work on empty tables, no rebuild needed)
+CREATE INDEX IF NOT EXISTS conversations_embedding_idx
+    ON conversations USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS notes_embedding_idx
+    ON notes USING hnsw (embedding vector_cosine_ops);
 """
 
 
