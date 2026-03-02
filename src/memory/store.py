@@ -247,3 +247,25 @@ class MemoryStore:
             return
         async with self._db.pool.acquire() as conn:
             await conn.execute("DELETE FROM notes WHERE id = $1::uuid", doc_id)
+
+    async def get_and_clear_location_reminders(self, location: str) -> list[str]:
+        """
+        Fetch all notes tagged with location:{location}, delete them, return their content.
+        Called when the user's iOS Shortcut signals arrival at a named location.
+        """
+        if not self._available:
+            return []
+        tag = f"location:{location}"
+        async with self._db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, content FROM notes WHERE $1 = ANY(tags)",
+                tag,
+            )
+            if not rows:
+                return []
+            ids = [str(r["id"]) for r in rows]
+            await conn.execute(
+                "DELETE FROM notes WHERE id = ANY($1::uuid[])",
+                ids,
+            )
+        return [r["content"] for r in rows]

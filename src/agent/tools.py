@@ -614,4 +614,25 @@ TOOLS: list[dict] = [
             "required": ["job_id"],
         },
     },
+    # ------------------------------------------------------------------ Location reminders
+    {
+        "name": "get_location_reminders",
+        "description": (
+            "Retrieve and clear all pending reminders saved for a named location. "
+            "Call this when the user signals they've arrived somewhere "
+            "(e.g. 'I just got home', 'I'm home', 'just arrived at the office'). "
+            "Returns what to remind them about, then wipes those reminders. "
+            "After calling this, tell the user each pending item."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "Location name matching how reminders were saved, e.g. 'home', 'office', 'gym'",
+                },
+            },
+            "required": ["location"],
+        },
+    },
 ]

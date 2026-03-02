@@ -436,6 +436,15 @@ class AgentCore:
                 return "Scheduler not available."
             return await self._scheduler.cancel_job(inputs["job_id"])
 
+        # --- Location reminders ---
+        if name == "get_location_reminders":
+            location = inputs["location"].lower().strip()
+            reminders = await self._memory.get_and_clear_location_reminders(location)
+            if not reminders:
+                return f"No pending reminders for {location}."
+            lines = "\n".join(f"- {r}" for r in reminders)
+            return f"Pending reminders for {location} ({len(reminders)}):\n{lines}"
+
         # --- Weather / News / Stocks ---
         if name == "get_weather":
             from src.integrations.weather import get_weather
