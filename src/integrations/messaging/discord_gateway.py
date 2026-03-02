@@ -64,7 +64,7 @@ class SilenceDetectingSink(discord.sinks.Sink):
     loop handles processing — no locking needed.
     """
 
-    SILENCE_SECS = 0.8   # seconds of no packets → end of utterance
+    SILENCE_SECS = 1.2   # seconds of no packets → end of utterance
     MIN_SECS = 0.4       # minimum utterance length (ignores blips)
     SAMPLE_RATE = 48000  # Discord native rate
     CHANNELS = 2         # stereo
