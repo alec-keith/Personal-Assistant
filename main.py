@@ -18,7 +18,9 @@ import asyncio
 import logging
 import random
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -174,6 +176,29 @@ async def main() -> None:
                 f"You're {loc_phrase} — don't forget:",
             ]
             await send_fn(f"{random.choice(intros)}\n{lines}")
+
+            # Save to memory so Roman has context, then schedule a follow-up check
+            tz = ZoneInfo(settings.agent_timezone)
+            task_summary = ", ".join(reminders)
+            try:
+                await memory.save_note(
+                    f"Reminded user on arrival {loc_phrase}: {task_summary}",
+                    tags=["location:followup"],
+                )
+            except Exception:
+                logger.warning("Failed to save location followup note")
+
+            followup_checks = [
+                f"Earlier when you got {location} you had these on the list:\n{lines}\n\nDid any of those get done?",
+                f"Checking in — you had a few things to handle when you arrived {loc_phrase}:\n{lines}\n\nAnything you knocked out?",
+                f"Quick follow-up on the things from when you got {location}:\n{lines}\n\nWhere do things stand?",
+                f"You had some things lined up for when you got {location}:\n{lines}\n\nHow's that looking?",
+            ]
+            await scheduler.schedule_reminder(
+                random.choice(followup_checks),
+                datetime.now(tz) + timedelta(hours=3),
+            )
+
         return JSONResponse({"ok": True, "reminders_fired": len(reminders)})
 
     scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar, db=db)
