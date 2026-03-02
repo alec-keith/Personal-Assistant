@@ -16,6 +16,7 @@ Deploy to Railway:
 
 import asyncio
 import logging
+import random
 import sys
 from pathlib import Path
 
@@ -160,12 +161,19 @@ async def main() -> None:
         if reminders:
             lines = "\n".join(f"• {r}" for r in reminders)
             loc_phrase = {
-                "home": "just got home",
-                "office": "just got to the office",
-                "work": "just got to work",
-                "gym": "just got to the gym",
-            }.get(location, f"just arrived at {location}")
-            await send_fn(f"Looks like you {loc_phrase} — don't forget to take care of these:\n{lines}")
+                "home": "home",
+                "office": "at the office",
+                "work": "at work",
+                "gym": "at the gym",
+            }.get(location, f"at {location}")
+            intros = [
+                f"You're {loc_phrase} — here's what you had on the list:",
+                f"Welcome {loc_phrase}. Don't let these slip:",
+                f"Now that you're {loc_phrase}, a few things to take care of:",
+                f"Glad you made it {loc_phrase}. Heads up on these:",
+                f"You're {loc_phrase} — don't forget:",
+            ]
+            await send_fn(f"{random.choice(intros)}\n{lines}")
         return JSONResponse({"ok": True, "reminders_fired": len(reminders)})
 
     scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar, db=db)
