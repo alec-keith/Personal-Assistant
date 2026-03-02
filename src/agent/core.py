@@ -181,6 +181,9 @@ class AgentCore:
 
         response_text = await self._run_agent_loop()
 
+        # Strip internal task IDs before returning to user — model doesn't always follow the prompt
+        response_text = re.sub(r"\s*\[id:[^\]]+\]", "", response_text)
+
         self._history.append({"role": "assistant", "content": response_text})
 
         # For the memory summary, describe images as text so it's searchable
