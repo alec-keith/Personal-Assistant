@@ -17,8 +17,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 EDGE_VOICE = "en-US-ChristopherNeural"  # deep natural male voice
-OPENAI_VOICE = "arbor"                  # arbor voice
-OPENAI_MODEL = "tts-1-hd"              # highest quality
+OPENAI_VOICE = "cedar"                  # natural male voice (OpenAI recommended)
+OPENAI_MODEL = "gpt-4o-mini-tts"       # supports cedar + marin voices
 
 
 async def synthesize(text: str) -> Path | None:
