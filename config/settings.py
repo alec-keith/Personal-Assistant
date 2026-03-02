@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Voyage AI (semantic embeddings — optional, falls back to full-text search)
     voyage_api_key: str = ""
 
+    # Tavily (web search + page fetch)
+    tavily_api_key: str = ""
+
     # Agent
     agent_name: str = "Atlas"
     agent_timezone: str = "America/New_York"

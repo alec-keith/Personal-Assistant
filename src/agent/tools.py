@@ -225,6 +225,41 @@ TOOLS: list[dict] = [
             "required": ["title", "start_iso"],
         },
     },
+    # ------------------------------------------------------------------ Web
+    {
+        "name": "web_search",
+        "description": (
+            "Search the web for current information, news, prices, facts, or anything "
+            "that might be outdated in your training data. Use this whenever the user "
+            "asks about recent events, live data, or anything you're not confident about."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The search query"},
+                "max_results": {
+                    "type": "integer",
+                    "description": "Number of results to return (default 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "fetch_page",
+        "description": (
+            "Fetch and read the full text content of a specific webpage. "
+            "Use this when you need to read an article, documentation, or any URL in detail."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The URL to fetch"},
+            },
+            "required": ["url"],
+        },
+    },
     # ------------------------------------------------------------------ Scheduling
     {
         "name": "schedule_reminder",

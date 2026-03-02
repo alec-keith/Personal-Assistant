@@ -288,11 +288,59 @@ class AgentCore:
                 return "Scheduler not available."
             return await self._scheduler.cancel_job(inputs["job_id"])
 
+        # --- Web ---
+        if name == "web_search":
+            return await self._web_search(inputs["query"], inputs.get("max_results", 5))
+
+        if name == "fetch_page":
+            return await self._fetch_page(inputs["url"])
+
         return f"Unknown tool: {name}"
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _web_search(self, query: str, max_results: int = 5) -> str:
+        try:
+            from config import settings as _s
+            if not _s.tavily_api_key:
+                return "Web search not available — TAVILY_API_KEY not configured."
+            from tavily import AsyncTavilyClient
+            client = AsyncTavilyClient(api_key=_s.tavily_api_key)
+            response = await client.search(query, max_results=max_results)
+            results = response.get("results", [])
+            if not results:
+                return "No results found."
+            lines = []
+            for r in results:
+                lines.append(f"**{r.get('title', 'No title')}**")
+                lines.append(r.get("url", ""))
+                content = r.get("content", "").strip()
+                if content:
+                    lines.append(content[:400])
+                lines.append("")
+            return "\n".join(lines).strip()
+        except Exception as e:
+            logger.exception("web_search failed")
+            return f"Search error: {e}"
+
+    async def _fetch_page(self, url: str) -> str:
+        try:
+            from config import settings as _s
+            if not _s.tavily_api_key:
+                return "Web fetch not available — TAVILY_API_KEY not configured."
+            from tavily import AsyncTavilyClient
+            client = AsyncTavilyClient(api_key=_s.tavily_api_key)
+            response = await client.extract(urls=[url])
+            results = response.get("results", [])
+            if not results:
+                return f"Could not extract content from {url}"
+            content = results[0].get("raw_content", "").strip()
+            return content[:6000] if len(content) > 6000 else content
+        except Exception as e:
+            logger.exception("fetch_page failed")
+            return f"Fetch error: {e}"
 
     def _select_model(self, user_text: str) -> str:
         """

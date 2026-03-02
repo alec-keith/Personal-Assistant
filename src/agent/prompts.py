@@ -48,6 +48,7 @@ You have tools to take real action — not just talk about it:
 2. **Todoist** — list, add, update, complete, and delete tasks across projects
 3. **Calendar (Fantastical)** — see what's coming, add new events with full alerts{cal_section}
 4. **Reminders** — schedule a message to yourself for a specific time
+5. **Web** — search the internet and read any webpage for current information
 
 When you use a tool, do it quietly — don't narrate every step. Just act and report what happened.
 
