@@ -106,16 +106,25 @@ class MemoryStore:
         embedding = await _embed(summary)
         async with self._db.pool.acquire() as conn:
             if embedding is not None:
-                await conn.execute(
-                    """
-                    INSERT INTO conversations (id, content, metadata, embedding)
-                    VALUES ($1, $2, $3::jsonb, $4::vector)
-                    """,
-                    doc_id,
-                    summary,
-                    str(metadata or {}),
-                    _vec_to_pg(embedding),
-                )
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO conversations (id, content, metadata, embedding)
+                        VALUES ($1, $2, $3::jsonb, $4::vector)
+                        """,
+                        doc_id,
+                        summary,
+                        str(metadata or {}),
+                        _vec_to_pg(embedding),
+                    )
+                except Exception:
+                    # pgvector column may not exist yet — fall back to text-only
+                    await conn.execute(
+                        "INSERT INTO conversations (id, content, metadata) VALUES ($1, $2, $3::jsonb)",
+                        doc_id,
+                        summary,
+                        str(metadata or {}),
+                    )
             else:
                 await conn.execute(
                     "INSERT INTO conversations (id, content, metadata) VALUES ($1, $2, $3::jsonb)",
@@ -172,13 +181,20 @@ class MemoryStore:
         embedding = await _embed(note)
         async with self._db.pool.acquire() as conn:
             if embedding is not None:
-                await conn.execute(
-                    """
-                    INSERT INTO notes (id, content, tags, embedding)
-                    VALUES ($1, $2, $3, $4::vector)
-                    """,
-                    doc_id, note, tags or [], _vec_to_pg(embedding),
-                )
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO notes (id, content, tags, embedding)
+                        VALUES ($1, $2, $3, $4::vector)
+                        """,
+                        doc_id, note, tags or [], _vec_to_pg(embedding),
+                    )
+                except Exception:
+                    # pgvector column may not exist yet — fall back to text-only
+                    await conn.execute(
+                        "INSERT INTO notes (id, content, tags) VALUES ($1, $2, $3)",
+                        doc_id, note, tags or [],
+                    )
             else:
                 await conn.execute(
                     "INSERT INTO notes (id, content, tags) VALUES ($1, $2, $3)",
