@@ -214,6 +214,7 @@ class DiscordGateway(MessagingGateway):
                     self._speak_in_voice = True
                     await self._start_voice_listening()
                     logger.info("Joined voice channel: %s", target.name)
+                    asyncio.create_task(self._play_tts("I'm here. Go ahead."))
                 except Exception:
                     logger.exception("Failed to join voice channel %s", target.name)
 
@@ -447,6 +448,7 @@ class DiscordGateway(MessagingGateway):
             self._speak_in_voice = True
             await self._start_voice_listening()
             logger.info("Manually joined voice channel: %s", target_channel.name)
+            asyncio.create_task(self._play_tts("I'm here. Go ahead."))
         except Exception:
             logger.exception("Failed to join voice channel")
             await message.channel.send("Couldn't connect to the voice channel.")
