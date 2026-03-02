@@ -65,8 +65,17 @@ async def main() -> None:
     # -- Database (PostgreSQL) --
     db: Database | None = None
     if settings.database_url:
-        db = Database(settings.database_url)
-        await db.initialize()
+        # asyncpg requires postgresql:// not postgres:// (Railway sometimes gives the latter)
+        db_url = settings.database_url.replace("postgres://", "postgresql://", 1)
+        try:
+            db = Database(db_url)
+            await db.initialize()
+        except Exception:
+            logger.exception(
+                "Database initialization failed — running without memory. "
+                "Check DATABASE_URL and that pgvector is enabled on the Postgres instance."
+            )
+            db = None
     else:
         logger.warning(
             "DATABASE_URL not set — memory disabled. "
