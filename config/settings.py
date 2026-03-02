@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     agent_name: str = "Atlas"
     agent_timezone: str = "America/New_York"
 
+    # Location webhook — secret token for /location-arrived endpoint
+    location_webhook_secret: str = ""
+
     # HTTP server port (used by BlueBubbles webhook receiver + health endpoint)
     port: int = 8080
 

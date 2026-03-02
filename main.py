@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -146,6 +146,22 @@ async def main() -> None:
                 logger.error("Discord fallback also failed")
 
         logger.error("No gateway available to send proactive message")
+
+    # -- Location-arrived webhook (silent, no Discord message needed) --
+    @app.post("/location-arrived")
+    async def location_arrived(request: Request) -> JSONResponse:
+        if not settings.location_webhook_secret:
+            raise HTTPException(status_code=404)
+        body = await request.json()
+        if body.get("secret") != settings.location_webhook_secret:
+            raise HTTPException(status_code=403, detail="Invalid secret")
+        location = str(body.get("location", "home")).lower().strip()
+        reminders = await memory.get_and_clear_location_reminders(location)
+        if reminders:
+            lines = "\n".join(f"• {r}" for r in reminders)
+            label = "Reminders" if len(reminders) > 1 else "Reminder"
+            await send_fn(f"{label} for when you got home:\n{lines}")
+        return JSONResponse({"ok": True, "reminders_fired": len(reminders)})
 
     scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar, db=db)
     agent._scheduler = scheduler  # give agent full scheduler access
