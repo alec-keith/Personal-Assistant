@@ -93,9 +93,7 @@ class AgentCore:
             location = "home" if "home" in raw_loc else raw_loc.replace("the ", "")
             reminder_text = _loc_match.group(2).strip().rstrip(".")
             await self._memory.save_note(reminder_text, tags=[f"location:{location}"])
-            reply = f"Got it — I'll remind you to {reminder_text} when you get {location}."
-            await self._memory.save_conversation(user_text, reply)
-            return reply
+            return f"Got it — I'll remind you to {reminder_text} when you get {location}."
 
         # Images always need the complex model; voice always uses the fast model;
         # otherwise route by content heuristic.
