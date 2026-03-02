@@ -421,6 +421,114 @@ TOOLS: list[dict] = [
             "required": ["task_id"],
         },
     },
+    # ------------------------------------------------------------------ Email
+    {
+        "name": "list_emails",
+        "description": (
+            "List recent emails from one or all configured email accounts. "
+            "Can filter to unread only, a specific folder, or a specific account."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_id": {
+                    "type": "string",
+                    "description": "Account ID to list from. Omit to check all accounts.",
+                },
+                "folder": {
+                    "type": "string",
+                    "description": "Folder to list (default: INBOX)",
+                    "default": "INBOX",
+                },
+                "unread_only": {
+                    "type": "boolean",
+                    "description": "Only return unread emails",
+                    "default": False,
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of emails to return (default 10)",
+                    "default": 10,
+                },
+            },
+        },
+    },
+    {
+        "name": "search_emails",
+        "description": "Search emails by keyword, sender, subject, or any query across all accounts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query (e.g. 'invoice', 'from:boss@company.com', 'subject:meeting')",
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": "Limit search to a specific account. Omit to search all.",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Max results (default 10)",
+                    "default": 10,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_email",
+        "description": "Read the full content of a specific email by its ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "The email message ID"},
+                "account_id": {"type": "string", "description": "The account the email belongs to"},
+            },
+            "required": ["message_id", "account_id"],
+        },
+    },
+    {
+        "name": "send_email",
+        "description": "Send an email from one of the configured accounts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address"},
+                "subject": {"type": "string", "description": "Email subject"},
+                "body": {"type": "string", "description": "Email body (plain text)"},
+                "account_id": {
+                    "type": "string",
+                    "description": "Which account to send from. Omit to use the default.",
+                },
+            },
+            "required": ["to", "subject", "body"],
+        },
+    },
+    {
+        "name": "archive_email",
+        "description": "Archive an email (removes from inbox, keeps in archive). Gmail only.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "The email message ID"},
+                "account_id": {"type": "string", "description": "The Gmail account ID"},
+            },
+            "required": ["message_id", "account_id"],
+        },
+    },
+    {
+        "name": "delete_email",
+        "description": "Move an email to trash. Always confirm with the user first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "The email message ID"},
+                "account_id": {"type": "string", "description": "The account the email belongs to"},
+            },
+            "required": ["message_id", "account_id"],
+        },
+    },
     # ------------------------------------------------------------------ Scheduling
     {
         "name": "schedule_reminder",

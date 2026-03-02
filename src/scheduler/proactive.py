@@ -394,18 +394,53 @@ class ProactiveScheduler:
 
     async def _morning_briefing(self) -> None:
         try:
-            tasks = await self._todoist.get_today_tasks()
-            events = await self._calendar.get_today_events()
-            task_summary = await self._todoist.format_tasks_summary(tasks)
-            event_summary = self._calendar.format_events_summary(events)
+            from src.integrations.weather import get_weather
+            from src.integrations.news import get_news
+            from datetime import date
 
-            lines = ["Good morning — here's your day:", ""]
-            if events:
-                lines += ["Calendar:", event_summary, ""]
-            if tasks:
-                lines += ["Today's tasks:", task_summary]
-            else:
-                lines.append("Nothing due today.")
+            tz = ZoneInfo(settings.agent_timezone)
+            day_name = datetime.now(tz).strftime("%A")
+
+            # Fetch everything concurrently
+            tasks_task = asyncio.create_task(self._todoist.get_today_tasks())
+            events_task = asyncio.create_task(self._calendar.get_today_events())
+            weather_task = asyncio.create_task(get_weather(settings.user_location, days=1))
+            fin_news_task = asyncio.create_task(get_news(settings.newsapi_key, topic="investing", count=5))
+            gen_news_task = asyncio.create_task(get_news(settings.newsapi_key, topic="top", count=5))
+
+            tasks, events, weather, fin_news, gen_news = await asyncio.gather(
+                tasks_task, events_task, weather_task, fin_news_task, gen_news_task,
+                return_exceptions=True,
+            )
+
+            lines = [f"Good morning — here's your {day_name}.", ""]
+
+            # Weather
+            if isinstance(weather, str):
+                lines += [weather, ""]
+
+            # Calendar
+            if isinstance(events, list):
+                if events:
+                    lines += ["— Calendar —", self._calendar.format_events_summary(events), ""]
+                else:
+                    lines += ["No calendar events today.", ""]
+
+            # Todoist
+            if isinstance(tasks, list):
+                if tasks:
+                    task_summary = await self._todoist.format_tasks_summary(tasks)
+                    lines += [f"— To-Do ({len(tasks)}) —", task_summary, ""]
+                else:
+                    lines += ["Nothing due in Todoist today.", ""]
+
+            # Financial news
+            if isinstance(fin_news, str):
+                lines += [fin_news, ""]
+
+            # General news
+            if isinstance(gen_news, str):
+                lines += [gen_news]
 
             await self._send("\n".join(lines))
         except Exception:
@@ -413,15 +448,57 @@ class ProactiveScheduler:
 
     async def _evening_wrapup(self) -> None:
         try:
-            incomplete = await self._todoist.get_today_tasks()
-            if not incomplete:
-                await self._send("Evening check-in: all clear. Good work today.")
-                return
-            summary = await self._todoist.format_tasks_summary(incomplete)
-            await self._send(
-                f"Evening check-in — {len(incomplete)} open task(s) still on the board:\n\n"
-                f"{summary}\n\nWant to reschedule, push anything, or call it done?"
+            tz = ZoneInfo(settings.agent_timezone)
+            now = datetime.now(tz)
+
+            # Tomorrow's date range
+            from datetime import timedelta
+            tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            tomorrow_end = tomorrow_start + timedelta(days=1)
+
+            # Fetch concurrently
+            open_tasks_task = asyncio.create_task(self._todoist.get_today_tasks())
+            tomorrow_events_task = asyncio.create_task(
+                self._calendar.list_events(start=tomorrow_start, end=tomorrow_end)
             )
+            tomorrow_tasks_task = asyncio.create_task(
+                self._todoist.list_tasks(filter_str="tomorrow")
+            )
+
+            open_tasks, tomorrow_events, tomorrow_tasks = await asyncio.gather(
+                open_tasks_task, tomorrow_events_task, tomorrow_tasks_task,
+                return_exceptions=True,
+            )
+
+            lines = ["Evening check-in.", ""]
+
+            # Still open today
+            if isinstance(open_tasks, list) and open_tasks:
+                open_summary = await self._todoist.format_tasks_summary(open_tasks)
+                lines += [f"Still open today ({len(open_tasks)}):", open_summary, ""]
+            else:
+                lines += ["Today's board is clear.", ""]
+
+            # Tomorrow preview
+            lines += ["— Tomorrow —", ""]
+
+            if isinstance(tomorrow_events, list) and tomorrow_events:
+                lines += ["Calendar:", self._calendar.format_events_summary(tomorrow_events), ""]
+            else:
+                lines += ["No calendar events tomorrow.", ""]
+
+            if isinstance(tomorrow_tasks, list) and tomorrow_tasks:
+                tm_summary = await self._todoist.format_tasks_summary(tomorrow_tasks)
+                lines += [f"On deck ({len(tomorrow_tasks)}):", tm_summary, ""]
+            else:
+                lines += ["Nothing due in Todoist tomorrow.", ""]
+
+            lines.append(
+                "Anything you knocked out today that I don't see above? "
+                "And is there anything specific you want to prioritize tomorrow?"
+            )
+
+            await self._send("\n".join(lines))
         except Exception:
             logger.exception("Evening wrap-up failed")
 

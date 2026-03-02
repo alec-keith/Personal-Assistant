@@ -1,3 +1,4 @@
+import json
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
@@ -54,6 +55,26 @@ class Settings(BaseSettings):
 
     # ClickUp (task management)
     clickup_api_token: str = ""
+
+    # Email accounts
+    # Gmail: JSON list of {id, label, credentials_path, token_path}
+    gmail_accounts_json: str = "[]"
+    # Yahoo/IMAP: JSON list of {id, label, email, app_password}
+    yahoo_accounts_json: str = "[]"
+
+    @property
+    def gmail_accounts(self) -> list[dict]:
+        try:
+            return json.loads(self.gmail_accounts_json)
+        except Exception:
+            return []
+
+    @property
+    def yahoo_accounts(self) -> list[dict]:
+        try:
+            return json.loads(self.yahoo_accounts_json)
+        except Exception:
+            return []
 
     # Default location for weather (no key needed — Open-Meteo is free)
     user_location: str = "New York"

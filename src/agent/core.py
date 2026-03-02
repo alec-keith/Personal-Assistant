@@ -23,6 +23,7 @@ from src.memory.store import MemoryStore
 from src.integrations.todoist import TodoistClient
 from src.integrations.calendar import CalendarClient
 from src.integrations.clickup import ClickUpClient
+from src.integrations.email import EmailManager
 from .prompts import build_system_prompt
 from .tools import TOOLS
 
@@ -40,6 +41,7 @@ class AgentCore:
         todoist: TodoistClient,
         calendar: CalendarClient,
         clickup: ClickUpClient | None = None,
+        email: EmailManager | None = None,
         # Injected so the agent can schedule proactive messages
         schedule_reminder_fn: Callable[[str, datetime], Awaitable[None]] | None = None,
     ) -> None:
@@ -48,6 +50,7 @@ class AgentCore:
         self._todoist = todoist
         self._calendar = calendar
         self._clickup = clickup
+        self._email = email
         self._schedule_reminder = schedule_reminder_fn
         self._scheduler = None  # injected from main.py after creation
         self._history: list[dict] = []
@@ -309,6 +312,60 @@ class AgentCore:
                 return "ClickUp not configured — set CLICKUP_API_TOKEN."
             await self._clickup.delete_task(inputs["task_id"])
             return f"Task {inputs['task_id']} deleted."
+
+        # --- Email ---
+        if name == "list_emails":
+            if not self._email or not self._email.available:
+                return "Email not configured. Run scripts/setup_gmail.py and/or set YAHOO_ACCOUNTS."
+            return await self._email.list_emails(
+                account_id=inputs.get("account_id"),
+                folder=inputs.get("folder", "INBOX"),
+                unread_only=inputs.get("unread_only", False),
+                count=inputs.get("count", 10),
+            )
+
+        if name == "search_emails":
+            if not self._email or not self._email.available:
+                return "Email not configured."
+            return await self._email.search_emails(
+                query=inputs["query"],
+                account_id=inputs.get("account_id"),
+                count=inputs.get("count", 10),
+            )
+
+        if name == "read_email":
+            if not self._email or not self._email.available:
+                return "Email not configured."
+            return await self._email.get_email(
+                message_id=inputs["message_id"],
+                account_id=inputs["account_id"],
+            )
+
+        if name == "send_email":
+            if not self._email or not self._email.available:
+                return "Email not configured."
+            return await self._email.send_email(
+                to=inputs["to"],
+                subject=inputs["subject"],
+                body=inputs["body"],
+                account_id=inputs.get("account_id"),
+            )
+
+        if name == "archive_email":
+            if not self._email or not self._email.available:
+                return "Email not configured."
+            return await self._email.archive_email(
+                message_id=inputs["message_id"],
+                account_id=inputs["account_id"],
+            )
+
+        if name == "delete_email":
+            if not self._email or not self._email.available:
+                return "Email not configured."
+            return await self._email.delete_email(
+                message_id=inputs["message_id"],
+                account_id=inputs["account_id"],
+            )
 
         # --- Scheduling ---
         if name == "schedule_reminder":
