@@ -30,6 +30,10 @@ AUDIO_TYPES = {
     "audio/x-m4a", "audio/aiff", "audio/webm", "video/mp4",
 }
 
+IMAGE_TYPES = {
+    "image/png", "image/jpeg", "image/gif", "image/webp",
+}
+
 JOIN_VOICE_CMDS = {"join voice", "join call", "/voice", "/join"}
 LEAVE_VOICE_CMDS = {"leave voice", "leave call", "/leave", "/disconnect"}
 
@@ -137,7 +141,7 @@ def _has_speech(pcm: bytes, threshold: float = SPEECH_ENERGY_THRESHOLD) -> bool:
 # ------------------------------------------------------------------
 
 class DiscordGateway(MessagingGateway):
-    def __init__(self, on_message: Callable[[str], Awaitable[str]]) -> None:
+    def __init__(self, on_message: Callable[..., Awaitable[str]]) -> None:
         self._on_message = on_message
         self._dm_channel: discord.DMChannel | None = None
         self._text_channel: discord.TextChannel | None = None
@@ -239,13 +243,23 @@ class DiscordGateway(MessagingGateway):
                 await self._handle_leave_voice(message)
                 return
 
-            # Audio attachment / voice memo
+            # Attachments — audio takes priority, then images
             if message.attachments:
                 for attachment in message.attachments:
                     ct = (attachment.content_type or "").split(";")[0].strip().lower()
                     if ct in AUDIO_TYPES or _is_voice_message(message):
                         asyncio.create_task(self._handle_audio(message, attachment))
                         return
+
+                image_attachments = [
+                    a for a in message.attachments
+                    if (a.content_type or "").split(";")[0].strip().lower() in IMAGE_TYPES
+                ]
+                if image_attachments:
+                    asyncio.create_task(
+                        self._handle_images(message, image_attachments)
+                    )
+                    return
 
             # Regular text message
             user_text = message.content.strip()
@@ -368,6 +382,37 @@ class DiscordGateway(MessagingGateway):
                     asyncio.create_task(self._play_tts(response))
         except Exception:
             logger.exception("Error handling audio attachment")
+
+    # ------------------------------------------------------------------
+    # Image attachment handler
+    # ------------------------------------------------------------------
+
+    async def _handle_images(
+        self,
+        message: discord.Message,
+        attachments: list[discord.Attachment],
+    ) -> None:
+        try:
+            images: list[tuple[bytes, str]] = []
+            for attachment in attachments:
+                media_type = (
+                    (attachment.content_type or "image/jpeg")
+                    .split(";")[0]
+                    .strip()
+                    .lower()
+                )
+                img_bytes = await attachment.read()
+                images.append((img_bytes, media_type))
+
+            user_text = message.content.strip()
+            async with message.channel.typing():
+                response = await self._on_message(user_text, images=images)
+                for chunk in _chunk(response, 1900):
+                    await message.channel.send(chunk)
+                if self._speak_in_voice and self._voice_client:
+                    asyncio.create_task(self._play_tts(response))
+        except Exception:
+            logger.exception("Error handling image attachment")
 
     # ------------------------------------------------------------------
     # Manual join / leave

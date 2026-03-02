@@ -10,6 +10,7 @@ Orchestrates:
 """
 
 import asyncio
+import base64
 import json
 import logging
 from datetime import datetime
@@ -62,23 +63,57 @@ class AgentCore:
     # Public entry point
     # ------------------------------------------------------------------
 
-    async def handle_message(self, user_text: str) -> str:
-        """Process one user message and return the assistant's reply."""
-        # Refresh profile cache on each message (cheap DB call, ensures freshness)
+    async def handle_message(
+        self,
+        user_text: str,
+        images: list[tuple[bytes, str]] | None = None,
+    ) -> str:
+        """
+        Process one user message and return the assistant's reply.
+
+        images: optional list of (raw_bytes, media_type) — e.g. (b"...", "image/png").
+                Passed as base64 blocks in the Claude multimodal content array.
+        """
         self._user_profile = await self._memory.get_profile()
 
-        # Route to the right model before entering the loop
-        self._current_model = self._select_model(user_text)
+        # Images always need the complex model (vision is heavy reasoning)
+        self._current_model = (
+            settings.claude_model_complex
+            if images
+            else self._select_model(user_text)
+        )
 
-        self._history.append({"role": "user", "content": user_text})
+        # Build message content — multimodal if images present
+        if images:
+            content: str | list = []
+            for img_bytes, media_type in images:
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.standard_b64encode(img_bytes).decode("utf-8"),
+                    },
+                })
+            content.append({
+                "type": "text",
+                "text": user_text.strip() or "What's in this image?",
+            })
+        else:
+            content = user_text
+
+        self._history.append({"role": "user", "content": content})
         self._trim_history()
 
         response_text = await self._run_agent_loop()
 
         self._history.append({"role": "assistant", "content": response_text})
 
-        # Asynchronously save a summary to memory (don't block the response)
-        asyncio.create_task(self._save_conversation_summary(user_text, response_text))
+        # For the memory summary, describe images as text so it's searchable
+        summary_input = (
+            f"[Shared {len(images)} image(s)] {user_text}" if images else user_text
+        )
+        asyncio.create_task(self._save_conversation_summary(summary_input, response_text))
 
         return response_text
 
