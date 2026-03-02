@@ -161,7 +161,7 @@ async def main() -> None:
         location = str(body.get("location", "home")).lower().strip()
         reminders = await memory.get_and_clear_location_reminders(location)
         if reminders:
-            lines = "\n".join(f"• {r}" for r in reminders)
+            lines = "\n".join(f"• {r['content']}" for r in reminders)
             loc_phrase = {
                 "home": "home",
                 "office": "at the office",
@@ -177,16 +177,20 @@ async def main() -> None:
             ]
             await send_fn(f"{random.choice(intros)}\n{lines}")
 
-            # Add each reminder as a Todoist task due today
-            for reminder in reminders:
+            # Add each reminder as a Todoist task (with due date if one was specified)
+            for r in reminders:
                 try:
-                    await todoist.add_task(reminder, labels=["location"])
+                    await todoist.add_task(
+                        r["content"],
+                        due_date=r["due_date"],  # None = no due date
+                        labels=["location"],
+                    )
                 except Exception:
-                    logger.warning("Failed to create Todoist task for location reminder: %r", reminder)
+                    logger.warning("Failed to create Todoist task for location reminder: %r", r["content"])
 
             # Save to memory so Roman has context, then schedule a follow-up check
             tz = ZoneInfo(settings.agent_timezone)
-            task_summary = ", ".join(reminders)
+            task_summary = ", ".join(r["content"] for r in reminders)
             try:
                 await memory.save_note(
                     f"Reminded user on arrival {loc_phrase}: {task_summary}",

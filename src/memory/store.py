@@ -15,6 +15,7 @@ silent no-ops so the bot still runs without memory.
 
 import logging
 import uuid
+from datetime import date
 from typing import Any
 
 from .database import Database
@@ -264,24 +265,40 @@ class MemoryStore:
         async with self._db.pool.acquire() as conn:
             await conn.execute("DELETE FROM notes WHERE id = $1::uuid", doc_id)
 
-    async def get_and_clear_location_reminders(self, location: str) -> list[str]:
+    async def get_and_clear_location_reminders(self, location: str) -> list[dict]:
         """
-        Fetch all notes tagged with location:{location}, delete them, return their content.
-        Called when the user's iOS Shortcut signals arrival at a named location.
+        Fetch notes tagged location:{location} that are due today or earlier (or have no due date).
+        Deletes only the ones that fired. Returns list of {"content": str, "due_date": str | None}.
         """
         if not self._available:
             return []
+        today = date.today().isoformat()
         tag = f"location:{location}"
         async with self._db.pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT id, content FROM notes WHERE $1 = ANY(tags)",
+                "SELECT id, content, tags FROM notes WHERE $1 = ANY(tags)",
                 tag,
             )
             if not rows:
                 return []
-            ids = [str(r["id"]) for r in rows]
+
+            due_now = []
+            for r in rows:
+                tags = r["tags"] or []
+                due_tag = next((t for t in tags if t.startswith("due:")), None)
+                if due_tag is None or due_tag[4:] <= today:
+                    due_now.append({
+                        "id": str(r["id"]),
+                        "content": r["content"],
+                        "due_date": due_tag[4:] if due_tag else None,
+                    })
+
+            if not due_now:
+                return []
+
+            ids = [item["id"] for item in due_now]
             await conn.execute(
                 "DELETE FROM notes WHERE id = ANY($1::uuid[])",
                 ids,
             )
-        return [r["content"] for r in rows]
+        return [{"content": item["content"], "due_date": item["due_date"]} for item in due_now]

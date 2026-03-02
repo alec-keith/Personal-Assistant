@@ -14,7 +14,7 @@ import base64
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import Callable, Awaitable
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,52 @@ from .prompts import build_system_prompt
 from .tools import TOOLS
 
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------
+# Location reminder helpers (module-level so they're compiled once)
+# ------------------------------------------------------------------
+
+# "when I get home remind me to X"  /  "when I get home tomorrow remind me to X"
+_LOC_RE = re.compile(
+    r"when\s+i\s+(?:get|arrive at|am at|reach|get back to|get to)?\s*"
+    r"(home|back home|the office|work|the gym|gym)[,.]?\s+"
+    r"(?:(?:on\s+)?(?:tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next\s+\w+)\s+)?"
+    r"remind\s+me\s+(?:to\s+)?(.+)",
+    re.IGNORECASE,
+)
+
+# "remind me tomorrow when I get home to X"  /  "remind me when I get home to X"
+_LOC_RE_2 = re.compile(
+    r"remind\s+me\s+"
+    r"(?:(?:on\s+)?(?:tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next\s+\w+)\s+)?"
+    r"when\s+i\s+(?:get|arrive at|am at|reach|get back to|get to)?\s*"
+    r"(home|back home|the office|work|the gym|gym)\s+(?:to\s+)?(.+)",
+    re.IGNORECASE,
+)
+
+_DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _parse_due_date(text: str, tz: ZoneInfo) -> str | None:
+    """
+    Scan text for date keywords and return YYYY-MM-DD, or None if no date found.
+    Handles: tomorrow, weekday names (next occurrence), 'next <weekday>'.
+    """
+    today = datetime.now(tz).date()
+    t = text.lower()
+
+    if "tomorrow" in t:
+        return (today + timedelta(days=1)).isoformat()
+
+    for i, day in enumerate(_DAY_NAMES):
+        if day in t:
+            days_ahead = (i - today.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7  # same weekday → next week
+            return (today + timedelta(days=days_ahead)).isoformat()
+
+    return None
+
 
 # Short-term in-memory conversation history (per session, not persisted)
 # Each item: {"role": "user"|"assistant", "content": str|list}
@@ -80,24 +126,26 @@ class AgentCore:
         self._user_profile = await self._memory.get_profile()
 
         # Location reminder fast-path: intercept before hitting Claude.
-        # "when I get home remind me to X" → save_note(tags=["location:home"]) directly.
-        _LOC_RE = re.compile(
-            r"when\s+i\s+(?:get|arrive at|am at|reach|get back to|get to)?\s*"
-            r"(home|back home|the office|work|the gym|gym)[,.]?\s+"
-            r"remind\s+me\s+(?:to\s+)?(.+)",
-            re.IGNORECASE,
-        )
-        _loc_match = _LOC_RE.search(user_text)
+        # Handles both "when I get home remind me to X" and "remind me tomorrow when I get home to X".
+        _loc_match = _LOC_RE.search(user_text) or _LOC_RE_2.search(user_text)
         if _loc_match and not images:
             raw_loc = _loc_match.group(1).lower().strip()
             location = "home" if "home" in raw_loc else raw_loc.replace("the ", "")
             reminder_text = _loc_match.group(2).strip().rstrip(".")
-            logger.info("Location reminder fast-path: loc=%s task=%r", location, reminder_text)
+            due_date = _parse_due_date(user_text, self._tz)
+            tags = [f"location:{location}"]
+            if due_date:
+                tags.append(f"due:{due_date}")
+            logger.info("Location reminder fast-path: loc=%s due=%s task=%r", location, due_date, reminder_text)
             try:
-                await self._memory.save_note(reminder_text, tags=[f"location:{location}"])
+                await self._memory.save_note(reminder_text, tags=tags)
                 logger.info("Location reminder saved successfully")
             except Exception:
                 logger.exception("Location reminder save_note failed")
+            if due_date:
+                d = date.fromisoformat(due_date)
+                date_label = d.strftime("%A, %B %-d")
+                return f"Got it — I'll remind you to {reminder_text} when you get {location} on {date_label}."
             return f"Got it — I'll remind you to {reminder_text} when you get {location}."
 
         # Images always need the complex model; voice always uses the fast model;
@@ -464,7 +512,7 @@ class AgentCore:
             reminders = await self._memory.get_and_clear_location_reminders(location)
             if not reminders:
                 return f"No pending reminders for {location}."
-            lines = "\n".join(f"- {r}" for r in reminders)
+            lines = "\n".join(f"- {r['content']}" for r in reminders)
             return f"Pending reminders for {location} ({len(reminders)}):\n{lines}"
 
         # --- Weather / News / Stocks ---
