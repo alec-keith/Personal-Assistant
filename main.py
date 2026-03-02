@@ -180,7 +180,7 @@ async def main() -> None:
             # Add each reminder as a Todoist task due today
             for reminder in reminders:
                 try:
-                    await todoist.add_task(reminder, due_string="today", labels=["location"])
+                    await todoist.add_task(reminder, labels=["location"])
                 except Exception:
                     logger.warning("Failed to create Todoist task for location reminder: %r", reminder)
 
