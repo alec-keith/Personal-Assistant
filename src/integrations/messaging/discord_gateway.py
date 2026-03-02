@@ -81,7 +81,9 @@ class SilenceDetectingSink(discord.sinks.Sink):
         return False  # request decoded PCM
 
     def write(self, data, user) -> None:
-        if not hasattr(user, "id") or user.id != self.target_user_id:
+        # discord.py passes user as an int user ID in some versions, a User/Member object in others
+        user_id = user if isinstance(user, int) else getattr(user, "id", None)
+        if user_id != self.target_user_id:
             return
         # data is AudioData (has .data bytes) in discord.py 2.x
         raw = bytes(data.data) if hasattr(data, "data") else bytes(data)
