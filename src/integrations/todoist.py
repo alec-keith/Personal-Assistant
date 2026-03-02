@@ -199,5 +199,5 @@ class TodoistClient:
             due_str = due.get("string") or due.get("date") or "no due date"
             priority_map = {1: "", 2: "🔵", 3: "🟠", 4: "🔴"}
             priority_icon = priority_map.get(t.get("priority", 1), "")
-            lines.append(f"- [{t['id']}] {priority_icon} {t['content']} ({due_str})")
+            lines.append(f"- {priority_icon} {t['content']} ({due_str}) [id:{t['id']}]")
         return "\n".join(lines)

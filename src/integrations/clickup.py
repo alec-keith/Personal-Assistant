@@ -261,13 +261,14 @@ class ClickUpClient:
             else:
                 due_str = "no due date"
             list_name = (t.get("list") or {}).get("name", "")
-            parts = [f"[{task_id}] {name}"]
+            parts = [name]
             parts.append(f"status:{status}")
             if priority_label:
                 parts.append(f"priority:{priority_label}")
             parts.append(f"due:{due_str}")
             if list_name:
                 parts.append(f"list:{list_name}")
+            parts.append(f"[id:{task_id}]")
             lines.append(" | ".join(parts))
         return "\n".join(lines)
 
