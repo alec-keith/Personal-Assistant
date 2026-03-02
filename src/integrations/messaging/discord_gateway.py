@@ -13,7 +13,9 @@ import asyncio
 import io
 import logging
 import math
+import re
 import wave
+from pathlib import Path
 from typing import Callable, Awaitable
 
 import discord
@@ -40,6 +42,9 @@ LEAVE_VOICE_CMDS = {"leave voice", "leave call", "/leave", "/disconnect"}
 # Minimum RMS energy to consider PCM audio as speech (not silence)
 SPEECH_ENERGY_THRESHOLD = 400
 
+# Sentence boundary: period/!/?/… followed by whitespace + uppercase or digit
+_SENTENCE_RE = re.compile(r'(?<=[.!?…])\s+(?=[A-Z0-9"\'(])')
+
 
 # ------------------------------------------------------------------
 # Voice capture sink
@@ -59,7 +64,7 @@ class SilenceDetectingSink(discord.sinks.Sink):
     loop handles processing — no locking needed.
     """
 
-    SILENCE_SECS = 1.5   # seconds of no packets → end of utterance
+    SILENCE_SECS = 0.8   # seconds of no packets → end of utterance
     MIN_SECS = 0.4       # minimum utterance length (ignores blips)
     SAMPLE_RATE = 48000  # Discord native rate
     CHANNELS = 2         # stereo
@@ -347,7 +352,7 @@ class DiscordGateway(MessagingGateway):
             if channel:
                 await channel.send(f"🎙 _{text}_")
 
-            response = await self._on_message(text)
+            response = await self._on_message(text, for_voice=True)
 
             if channel:
                 for chunk in _chunk(response, 1900):
@@ -466,24 +471,43 @@ class DiscordGateway(MessagingGateway):
     # ------------------------------------------------------------------
 
     async def _play_tts(self, text: str) -> None:
+        """
+        Split response into sentences, generate TTS for all in parallel,
+        then play them back-to-back. First sentence starts playing as soon
+        as its audio is ready rather than waiting for the full response.
+        """
         if not self._voice_client or not self._voice_client.is_connected():
             return
 
-        audio_path = await synthesize(text)
-        if audio_path is None:
+        sentences = _split_sentences(text)
+        if not sentences:
             return
 
+        # Generate all TTS calls concurrently
+        audio_paths = await asyncio.gather(
+            *[synthesize(s) for s in sentences], return_exceptions=True
+        )
+
+        # Play back sequentially, skip any that failed
+        for path in audio_paths:
+            if isinstance(path, Exception) or path is None:
+                continue
+            await self._play_audio_file(path)
+
+    async def _play_audio_file(self, audio_path: Path) -> None:
+        if not self._voice_client or not self._voice_client.is_connected():
+            return
         try:
             ffmpeg_exe = get_ffmpeg_exe()
             source = discord.FFmpegPCMAudio(str(audio_path), executable=ffmpeg_exe)
 
             while self._voice_client.is_playing():
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
 
             self._voice_client.play(source)
 
             while self._voice_client.is_playing():
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
         except Exception:
             logger.exception("TTS playback failed")
         finally:
@@ -519,6 +543,28 @@ class DiscordGateway(MessagingGateway):
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+def _split_sentences(text: str) -> list[str]:
+    """
+    Split text at sentence boundaries for pipelined TTS.
+    Short fragments (< 12 chars) are merged with the next sentence
+    to avoid firing TTS for single words like "Sure." or "Yes."
+    """
+    parts = _SENTENCE_RE.split(text.strip())
+    result: list[str] = []
+    buf = ""
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        buf = (buf + " " + part).strip() if buf else part
+        if len(buf) >= 12:
+            result.append(buf)
+            buf = ""
+    if buf:
+        result.append(buf)
+    return result or [text.strip()]
+
 
 def _is_voice_message(message: discord.Message) -> bool:
     try:
