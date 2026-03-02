@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Callable, Awaitable
 from zoneinfo import ZoneInfo
@@ -77,6 +78,24 @@ class AgentCore:
         for_voice: when True, forces the fast model — voice replies must be quick.
         """
         self._user_profile = await self._memory.get_profile()
+
+        # Location reminder fast-path: intercept before hitting Claude.
+        # "when I get home remind me to X" → save_note(tags=["location:home"]) directly.
+        _LOC_RE = re.compile(
+            r"when\s+i\s+(?:get|arrive at|am at|reach|get back to|get to)?\s*"
+            r"(home|back home|the office|work|the gym|gym)[,.]?\s+"
+            r"remind\s+me\s+(?:to\s+)?(.+)",
+            re.IGNORECASE,
+        )
+        _loc_match = _LOC_RE.search(user_text)
+        if _loc_match and not images:
+            raw_loc = _loc_match.group(1).lower().strip()
+            location = "home" if "home" in raw_loc else raw_loc.replace("the ", "")
+            reminder_text = _loc_match.group(2).strip().rstrip(".")
+            await self._memory.save_note(reminder_text, tags=[f"location:{location}"])
+            reply = f"Got it — I'll remind you to {reminder_text} when you get {location}."
+            await self._memory.save_conversation(user_text, reply)
+            return reply
 
         # Images always need the complex model; voice always uses the fast model;
         # otherwise route by content heuristic.
