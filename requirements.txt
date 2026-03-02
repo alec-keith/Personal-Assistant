@@ -38,6 +38,9 @@ tavily-python>=0.5.0
 # Stocks (Yahoo Finance — no key needed)
 yfinance>=0.2.0
 
+# TTS (cross-platform — gTTS uses Google's free TTS API, works on Railway/Linux)
+gTTS>=2.3.0
+
 # Email (Gmail REST API + Yahoo IMAP — Yahoo uses stdlib imaplib, no extra dep)
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.1.0

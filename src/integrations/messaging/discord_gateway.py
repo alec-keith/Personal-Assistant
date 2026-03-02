@@ -4,11 +4,16 @@ Discord gateway — DM + voice support.
 Text DMs: normal chat with Roman.
 Voice message / audio attachments: transcribed via Groq Whisper, handled as text.
 Voice channel: Roman auto-joins when you enter a voice channel, auto-leaves when you leave.
-               Speaks all responses aloud via TTS while in the channel.
+               Listens for speech via SilenceDetectingSink, transcribes with Whisper,
+               and speaks replies via TTS.
 """
 
+import array
 import asyncio
+import io
 import logging
+import math
+import wave
 from typing import Callable, Awaitable
 
 import discord
@@ -20,16 +25,116 @@ from src.integrations.tts import synthesize, get_ffmpeg_exe
 
 logger = logging.getLogger(__name__)
 
-# Audio MIME types we'll attempt to transcribe
 AUDIO_TYPES = {
     "audio/ogg", "audio/mpeg", "audio/mp4", "audio/wav",
     "audio/x-m4a", "audio/aiff", "audio/webm", "video/mp4",
 }
 
-# These still work as manual overrides, but auto-join/leave is the primary flow
 JOIN_VOICE_CMDS = {"join voice", "join call", "/voice", "/join"}
 LEAVE_VOICE_CMDS = {"leave voice", "leave call", "/leave", "/disconnect"}
 
+# Minimum RMS energy to consider PCM audio as speech (not silence)
+SPEECH_ENERGY_THRESHOLD = 400
+
+
+# ------------------------------------------------------------------
+# Voice capture sink
+# ------------------------------------------------------------------
+
+class SilenceDetectingSink(discord.sinks.AudioSink):
+    """
+    Captures raw PCM audio from Discord voice for a single target user.
+    After SILENCE_SECS of no audio packets the utterance is fire via on_utterance(wav_bytes).
+
+    Thread model: write() is called from discord.py's audio receive thread.
+    Data is pushed to an asyncio.Queue via call_soon_threadsafe so the event
+    loop handles processing — no locking needed.
+    """
+
+    SILENCE_SECS = 1.5   # seconds of no packets → end of utterance
+    MIN_SECS = 0.4       # minimum utterance length (ignores blips)
+    SAMPLE_RATE = 48000  # Discord native rate
+    CHANNELS = 2         # stereo
+    SAMPLE_WIDTH = 2     # 16-bit PCM
+
+    def __init__(self, target_user_id: int, loop: asyncio.AbstractEventLoop) -> None:
+        self.target_user_id = target_user_id
+        self._loop = loop
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+    @property
+    def wants_opus(self) -> bool:
+        return False  # request decoded PCM
+
+    def write(self, data, user) -> None:
+        if user.id != self.target_user_id:
+            return
+        # Thread-safe push to event loop
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, bytes(data.data))
+
+    def cleanup(self) -> None:
+        # Signal listen() to exit
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
+
+    async def listen(self, on_utterance: Callable[[bytes], Awaitable[None]]) -> None:
+        """
+        Runs on the event loop. Uses asyncio.wait_for timeout as a silence detector:
+        when no audio packets arrive for SILENCE_SECS, the buffer is processed.
+        """
+        min_bytes = int(self.SAMPLE_RATE * self.CHANNELS * self.SAMPLE_WIDTH * self.MIN_SECS)
+        buffer = bytearray()
+
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    self._queue.get(), timeout=self.SILENCE_SECS
+                )
+                if chunk is None:  # cleanup signal
+                    break
+                buffer.extend(chunk)
+
+            except asyncio.TimeoutError:
+                if len(buffer) >= min_bytes:
+                    pcm = bytes(buffer)
+                    buffer = bytearray()
+                    if _has_speech(pcm):
+                        wav = _pcm_to_wav(
+                            pcm, self.SAMPLE_RATE, self.CHANNELS, self.SAMPLE_WIDTH
+                        )
+                        await on_utterance(wav)
+                elif buffer:
+                    buffer = bytearray()  # too short, discard
+
+
+# ------------------------------------------------------------------
+# PCM helpers
+# ------------------------------------------------------------------
+
+def _pcm_to_wav(pcm: bytes, rate: int, channels: int, width: int) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(width)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
+def _has_speech(pcm: bytes, threshold: float = SPEECH_ENERGY_THRESHOLD) -> bool:
+    """Return True if PCM contains audible speech (not silence)."""
+    if len(pcm) < 2:
+        return False
+    try:
+        samples = array.array("h", pcm)
+        rms = math.sqrt(sum(s * s for s in samples) / len(samples))
+        return rms > threshold
+    except Exception:
+        return True  # assume speech on error
+
+
+# ------------------------------------------------------------------
+# Gateway
+# ------------------------------------------------------------------
 
 class DiscordGateway(MessagingGateway):
     def __init__(self, on_message: Callable[[str], Awaitable[str]]) -> None:
@@ -37,8 +142,10 @@ class DiscordGateway(MessagingGateway):
         self._dm_channel: discord.DMChannel | None = None
         self._text_channel: discord.TextChannel | None = None
         self._voice_client: discord.VoiceClient | None = None
-        # Whether to also speak Roman's text responses in the voice channel
         self._speak_in_voice: bool = False
+        self._sink: SilenceDetectingSink | None = None
+        self._listen_task: asyncio.Task | None = None
+        self._is_busy: bool = False  # prevent overlapping responses
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -75,7 +182,6 @@ class DiscordGateway(MessagingGateway):
             before: discord.VoiceState,
             after: discord.VoiceState,
         ) -> None:
-            # Only care about your own voice state changes
             if member.id != settings.discord_user_id:
                 return
 
@@ -88,23 +194,26 @@ class DiscordGateway(MessagingGateway):
             )
 
             if joined or moved:
-                target = after.channel
-                # Disconnect from any previous channel first
+                await self._stop_voice_listening()
                 if self._voice_client and self._voice_client.is_connected():
                     await self._voice_client.disconnect(force=True)
+
+                target = after.channel
                 try:
                     self._voice_client = await target.connect()
                     self._speak_in_voice = True
-                    logger.info("Auto-joined voice channel: %s", target.name)
+                    await self._start_voice_listening()
+                    logger.info("Joined voice channel: %s", target.name)
                 except Exception:
-                    logger.exception("Failed to auto-join voice channel %s", target.name)
+                    logger.exception("Failed to join voice channel %s", target.name)
 
             elif left:
                 self._speak_in_voice = False
+                await self._stop_voice_listening()
                 if self._voice_client and self._voice_client.is_connected():
                     await self._voice_client.disconnect(force=True)
-                    self._voice_client = None
-                logger.info("Auto-left voice channel")
+                self._voice_client = None
+                logger.info("Left voice channel")
 
         @client.event
         async def on_message(message: discord.Message) -> None:
@@ -120,7 +229,6 @@ class DiscordGateway(MessagingGateway):
             if not in_dm and not in_text_channel:
                 return
 
-            # ---- Voice channel commands ----
             cmd = message.content.strip().lower()
 
             if cmd in JOIN_VOICE_CMDS:
@@ -131,39 +239,108 @@ class DiscordGateway(MessagingGateway):
                 await self._handle_leave_voice(message)
                 return
 
-            # ---- Voice message or audio attachment ----
+            # Audio attachment / voice memo
             if message.attachments:
                 for attachment in message.attachments:
                     ct = (attachment.content_type or "").split(";")[0].strip().lower()
-                    is_audio = ct in AUDIO_TYPES or _is_voice_message(message)
-                    if is_audio:
-                        asyncio.create_task(
-                            self._handle_audio(message, attachment)
-                        )
+                    if ct in AUDIO_TYPES or _is_voice_message(message):
+                        asyncio.create_task(self._handle_audio(message, attachment))
                         return
 
-            # ---- Regular text message ----
+            # Regular text message
             user_text = message.content.strip()
             if not user_text:
                 return
 
-            logger.info("Received message: %s", user_text[:80])
+            logger.info("Received text: %s", user_text[:80])
             async with message.channel.typing():
                 try:
                     response = await self._on_message(user_text)
-                    chunks = _chunk(response, 1900)
-                    await message.channel.send(chunks[0])
-                    for chunk in chunks[1:]:
+                    for chunk in _chunk(response, 1900):
                         await message.channel.send(chunk)
-                    # Speak in voice channel if joined
                     if self._speak_in_voice and self._voice_client:
                         asyncio.create_task(self._play_tts(response))
                 except Exception:
-                    logger.exception("Error processing message")
+                    logger.exception("Error processing text message")
                     await message.channel.send("Hit an error. Check the logs.")
 
     # ------------------------------------------------------------------
-    # Audio attachment handler (voice memos)
+    # Voice listening
+    # ------------------------------------------------------------------
+
+    async def _start_voice_listening(self) -> None:
+        if not self._voice_client or not self._voice_client.is_connected():
+            return
+
+        loop = asyncio.get_event_loop()
+        self._sink = SilenceDetectingSink(settings.discord_user_id, loop)
+        self._listen_task = asyncio.create_task(
+            self._sink.listen(self._on_voice_utterance)
+        )
+
+        try:
+            self._voice_client.start_recording(self._sink, self._recording_done)
+            logger.info("Voice listening started")
+        except Exception:
+            logger.exception("Failed to start voice recording")
+            self._listen_task.cancel()
+            self._listen_task = None
+            self._sink = None
+
+    async def _stop_voice_listening(self) -> None:
+        if self._voice_client and self._voice_client.is_connected():
+            try:
+                self._voice_client.stop_recording()
+            except Exception:
+                pass  # not recording — that's fine
+
+        if self._listen_task and not self._listen_task.done():
+            self._listen_task.cancel()
+            try:
+                await asyncio.shield(self._listen_task)
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        self._listen_task = None
+        self._sink = None
+
+    async def _recording_done(self, sink, *args) -> None:
+        """Called by discord.py when stop_recording() fires. No-op."""
+        pass
+
+    async def _on_voice_utterance(self, wav_bytes: bytes) -> None:
+        """Called by the listen loop when the user finishes speaking."""
+        if self._is_busy:
+            return
+
+        self._is_busy = True
+        try:
+            text = await transcribe_bytes(wav_bytes, "voice.wav")
+            if not text or len(text.strip()) < 3:
+                return
+
+            logger.info("Voice utterance: %s", text[:80])
+
+            # Echo transcription to text channel
+            channel = self._text_channel or self._dm_channel
+            if channel:
+                await channel.send(f"🎙 _{text}_")
+
+            response = await self._on_message(text)
+
+            if channel:
+                for chunk in _chunk(response, 1900):
+                    await channel.send(chunk)
+
+            await self._play_tts(response)
+
+        except Exception:
+            logger.exception("Voice utterance handling failed")
+        finally:
+            self._is_busy = False
+
+    # ------------------------------------------------------------------
+    # Audio attachment handler
     # ------------------------------------------------------------------
 
     async def _handle_audio(
@@ -172,8 +349,7 @@ class DiscordGateway(MessagingGateway):
         try:
             await message.channel.send("🎙 Transcribing...")
             audio_bytes = await attachment.read()
-            filename = attachment.filename or "audio.ogg"
-            text = await transcribe_bytes(audio_bytes, filename)
+            text = await transcribe_bytes(audio_bytes, attachment.filename or "audio.ogg")
 
             if not text:
                 await message.channel.send(
@@ -188,18 +364,17 @@ class DiscordGateway(MessagingGateway):
                 response = await self._on_message(text)
                 for chunk in _chunk(response, 1900):
                     await message.channel.send(chunk)
-                # Speak in voice channel if joined
                 if self._speak_in_voice and self._voice_client:
                     asyncio.create_task(self._play_tts(response))
         except Exception:
             logger.exception("Error handling audio attachment")
 
     # ------------------------------------------------------------------
-    # Voice channel — join / leave / speak
+    # Manual join / leave
     # ------------------------------------------------------------------
 
     async def _handle_join_voice(self, message: discord.Message) -> None:
-        target_channel: discord.VoiceChannel | None = None
+        target_channel = None
         for guild in self._client.guilds:
             member = guild.get_member(settings.discord_user_id)
             if member and member.voice and member.voice.channel:
@@ -208,16 +383,18 @@ class DiscordGateway(MessagingGateway):
 
         if target_channel is None:
             await message.channel.send(
-                "Join a voice channel first, then DM me \"join voice\"."
+                "Join a voice channel first, then say \"join voice\"."
             )
             return
 
+        await self._stop_voice_listening()
         if self._voice_client and self._voice_client.is_connected():
             await self._voice_client.disconnect(force=True)
 
         try:
             self._voice_client = await target_channel.connect()
             self._speak_in_voice = True
+            await self._start_voice_listening()
             logger.info("Manually joined voice channel: %s", target_channel.name)
         except Exception:
             logger.exception("Failed to join voice channel")
@@ -225,29 +402,28 @@ class DiscordGateway(MessagingGateway):
 
     async def _handle_leave_voice(self, message: discord.Message) -> None:
         self._speak_in_voice = False
+        await self._stop_voice_listening()
         if self._voice_client and self._voice_client.is_connected():
             await self._voice_client.disconnect(force=True)
             self._voice_client = None
         await message.channel.send("Left the voice channel.")
-        logger.info("Left voice channel")
+
+    # ------------------------------------------------------------------
+    # TTS playback
+    # ------------------------------------------------------------------
 
     async def _play_tts(self, text: str) -> None:
-        """Synthesize and play text in the voice channel."""
         if not self._voice_client or not self._voice_client.is_connected():
             return
 
-        # Keep spoken responses concise
-        spoken = text[:400] if len(text) > 400 else text
-
-        aiff_path = await synthesize(spoken)
-        if aiff_path is None:
+        audio_path = await synthesize(text)
+        if audio_path is None:
             return
 
         try:
             ffmpeg_exe = get_ffmpeg_exe()
-            source = discord.FFmpegPCMAudio(str(aiff_path), executable=ffmpeg_exe)
+            source = discord.FFmpegPCMAudio(str(audio_path), executable=ffmpeg_exe)
 
-            # Wait for any current playback to finish
             while self._voice_client.is_playing():
                 await asyncio.sleep(0.1)
 
@@ -259,7 +435,7 @@ class DiscordGateway(MessagingGateway):
             logger.exception("TTS playback failed")
         finally:
             try:
-                aiff_path.unlink(missing_ok=True)
+                audio_path.unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -268,11 +444,8 @@ class DiscordGateway(MessagingGateway):
     # ------------------------------------------------------------------
 
     async def send_message(self, text: str) -> None:
-        # Prefer server channel (triggers @mention notification) over DM
         if self._text_channel is not None:
-            chunks = _chunk(text, 1900)
-            await self._text_channel.send(chunks[0])
-            for chunk in chunks[1:]:
+            for chunk in _chunk(text, 1900):
                 await self._text_channel.send(chunk)
         elif self._dm_channel is not None:
             for chunk in _chunk(text, 1900):
@@ -280,9 +453,11 @@ class DiscordGateway(MessagingGateway):
         else:
             logger.warning("No channel ready — cannot send proactive message")
             return
-        # Speak proactive messages in voice too if joined
         if self._speak_in_voice and self._voice_client:
             asyncio.create_task(self._play_tts(text))
+
+    async def is_reachable(self) -> bool:
+        return self._dm_channel is not None or self._text_channel is not None
 
     async def start(self) -> None:
         await self._client.start(settings.discord_bot_token)
@@ -300,4 +475,4 @@ def _is_voice_message(message: discord.Message) -> bool:
 
 
 def _chunk(text: str, size: int) -> list[str]:
-    return [text[i : i + size] for i in range(0, len(text), size)]
+    return [text[i: i + size] for i in range(0, len(text), size)]
