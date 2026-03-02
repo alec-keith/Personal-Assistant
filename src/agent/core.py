@@ -285,15 +285,16 @@ class AgentCore:
     async def _save_conversation_summary(self, user_text: str, assistant_text: str) -> None:
         """Summarise and persist a conversation turn to memory."""
         try:
-            # Ask Claude to write a one-sentence summary
             summary_response = await self._client.messages.create(
-                model="claude-haiku-4-5-20251001",  # Fast + cheap for this
-                max_tokens=200,
+                model="claude-haiku-4-5-20251001",
+                max_tokens=300,
                 messages=[{
                     "role": "user",
                     "content": (
-                        f"Summarise this exchange in one sentence for future recall:\n\n"
-                        f"User: {user_text[:500]}\n\nAssistant: {assistant_text[:500]}"
+                        f"Write a 2-3 sentence memory note for this exchange. "
+                        f"Preserve specific details: exact words used, names, numbers, tasks, dates, decisions. "
+                        f"Start with the verbatim user message in quotes.\n\n"
+                        f"User: {user_text[:600]}\n\nAssistant: {assistant_text[:600]}"
                     ),
                 }],
             )

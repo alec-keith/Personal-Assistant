@@ -198,8 +198,11 @@ TOOLS: list[dict] = [
     {
         "name": "schedule_reminder",
         "description": (
-            "Schedule a one-shot reminder to send to the user at a specific time. "
-            "Use this when the user says 'remind me at 3pm' or when you want to follow up once."
+            "Schedule a one-shot message to send to the user at a future time. "
+            "ALWAYS use this tool when the user says anything like: 'remind me', 'message me in X minutes', "
+            "'send me a message at 3pm', 'check in with me later', 'ping me in an hour', or any request "
+            "to be contacted at a specific future time. Never just acknowledge these requests in text — "
+            "always call this tool to actually schedule the message."
         ),
         "input_schema": {
             "type": "object",

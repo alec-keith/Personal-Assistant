@@ -8,11 +8,13 @@ Three modes:
    across restarts via the PostgreSQL recurring_jobs table (or JSON fallback)
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Awaitable
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -63,12 +65,21 @@ class ProactiveScheduler:
 
     async def schedule_reminder(self, message: str, when: datetime) -> None:
         job_id = f"reminder_{when.isoformat()}"
+        job_def = {
+            "id": job_id,
+            "message": message,
+            "description": f"One-shot reminder at {when.isoformat()}",
+            "trigger_type": "date",
+            "trigger_args": {"run_date": when.isoformat()},
+            "end_date": None,
+        }
+        await self._persist_job(job_def)
         self._scheduler.add_job(
-            self._send_reminder,
+            self._send_and_cleanup_reminder,
             trigger=DateTrigger(run_date=when, timezone=settings.agent_timezone),
             id=job_id,
             replace_existing=True,
-            kwargs={"message": message},
+            kwargs={"message": message, "job_id": job_id},
         )
         logger.info("Scheduled reminder at %s: %s", when, message[:60])
 
@@ -261,7 +272,37 @@ class ProactiveScheduler:
         for job_def in jobs:
             try:
                 end_date = job_def.get("end_date")
-                if job_def["trigger_type"] == "interval":
+                trigger_type = job_def["trigger_type"]
+
+                if trigger_type == "date":
+                    run_date = datetime.fromisoformat(job_def["trigger_args"]["run_date"])
+                    tz = ZoneInfo(settings.agent_timezone)
+                    if run_date.tzinfo is None:
+                        run_date = run_date.replace(tzinfo=tz)
+                    now = datetime.now(tz)
+                    age_seconds = (now - run_date).total_seconds()
+                    if age_seconds > 3600:
+                        # Over an hour late — stale, just delete
+                        await self._delete_job(job_def["id"])
+                        continue
+                    elif age_seconds > 0:
+                        # Missed but recent — fire immediately
+                        asyncio.create_task(self._send_and_cleanup_reminder(
+                            job_def["message"], job_def["id"]
+                        ))
+                        continue
+                    else:
+                        trigger = DateTrigger(run_date=run_date, timezone=settings.agent_timezone)
+                        self._scheduler.add_job(
+                            self._send_and_cleanup_reminder,
+                            trigger=trigger,
+                            id=job_def["id"],
+                            replace_existing=True,
+                            kwargs={"message": job_def["message"], "job_id": job_def["id"]},
+                        )
+                    continue
+
+                if trigger_type == "interval":
                     trigger = IntervalTrigger(
                         **{k: v for k, v in job_def["trigger_args"].items()},
                         timezone=settings.agent_timezone,
@@ -303,6 +344,10 @@ class ProactiveScheduler:
 
     async def _send_reminder(self, message: str) -> None:
         await self._send(f"⏰ {message}")
+
+    async def _send_and_cleanup_reminder(self, message: str, job_id: str) -> None:
+        await self._send(f"⏰ {message}")
+        await self._delete_job(job_id)
 
     # ------------------------------------------------------------------
     # Built-in periodic jobs
