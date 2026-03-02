@@ -152,8 +152,7 @@ class DiscordGateway(MessagingGateway):
                 try:
                     response = await self._on_message(user_text)
                     chunks = _chunk(response, 1900)
-                    mention = f"<@{settings.discord_user_id}>"
-                    await message.channel.send(f"{mention} {chunks[0]}")
+                    await message.channel.send(chunks[0])
                     for chunk in chunks[1:]:
                         await message.channel.send(chunk)
                     # Speak in voice channel if joined
