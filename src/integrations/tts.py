@@ -1,11 +1,11 @@
 """
-Text-to-speech — cross-platform.
+Text-to-speech — cross-platform, male voice.
 
-Primary: gTTS (Google TTS, free, works on Railway/Linux, requires internet).
-Fallback: macOS built-in `say` command (local, works offline, Mac only).
+Primary: edge-tts (Microsoft Edge Neural TTS, free, no API key, works on Railway/Linux).
+         Voice: en-US-ChristopherNeural — deep, natural American male.
+Fallback: macOS built-in `say` with "Alex" (male voice, Mac only).
 
-Output is an audio file (MP3 from gTTS, AIFF from say) playable via
-FFmpegPCMAudio in Discord voice channels.
+Output is an MP3/AIFF file playable via FFmpegPCMAudio in Discord voice channels.
 """
 
 import asyncio
@@ -15,6 +15,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+EDGE_VOICE = "en-US-ChristopherNeural"  # deep natural male voice
+
 
 async def synthesize(text: str) -> Path | None:
     """
@@ -23,26 +25,23 @@ async def synthesize(text: str) -> Path | None:
     """
     spoken = text[:400]
 
-    # Primary: gTTS — works on Linux/Railway (free, no key, needs internet)
+    # Primary: edge-tts — free, no API key, natural male voice, works on Linux
     try:
-        from gtts import gTTS  # type: ignore
-
-        def _gtts_save(out: Path) -> None:
-            tts = gTTS(text=spoken, lang="en", slow=False)
-            tts.save(str(out))
+        import edge_tts  # type: ignore
 
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             out_path = Path(f.name)
 
-        await asyncio.get_event_loop().run_in_executor(None, _gtts_save, out_path)
+        communicate = edge_tts.Communicate(text=spoken, voice=EDGE_VOICE)
+        await communicate.save(str(out_path))
         return out_path
 
     except ImportError:
-        logger.debug("gTTS not installed, trying macOS say")
+        logger.debug("edge-tts not installed, trying macOS say")
     except Exception:
-        logger.warning("gTTS failed, trying macOS say", exc_info=True)
+        logger.warning("edge-tts failed, trying macOS say", exc_info=True)
 
-    # Fallback: macOS say (local, no internet)
+    # Fallback: macOS say with Alex (male voice)
     try:
         import subprocess
 
@@ -52,7 +51,7 @@ async def synthesize(text: str) -> Path | None:
         await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: subprocess.run(
-                ["say", "-v", "Samantha", "-o", str(out_path), spoken],
+                ["say", "-v", "Alex", "-o", str(out_path), spoken],
                 check=True,
                 capture_output=True,
             ),
@@ -60,7 +59,7 @@ async def synthesize(text: str) -> Path | None:
         return out_path
 
     except FileNotFoundError:
-        logger.warning("No TTS available — install gTTS: pip install gTTS")
+        logger.warning("No TTS available — install edge-tts: pip install edge-tts")
         return None
     except Exception:
         logger.exception("TTS synthesis failed")
