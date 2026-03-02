@@ -159,7 +159,13 @@ async def main() -> None:
         reminders = await memory.get_and_clear_location_reminders(location)
         if reminders:
             lines = "\n".join(f"• {r}" for r in reminders)
-            await send_fn(f"Looks like you just got home — don't forget to take care of these:\n{lines}")
+            loc_phrase = {
+                "home": "just got home",
+                "office": "just got to the office",
+                "work": "just got to work",
+                "gym": "just got to the gym",
+            }.get(location, f"just arrived at {location}")
+            await send_fn(f"Looks like you {loc_phrase} — don't forget to take care of these:\n{lines}")
         return JSONResponse({"ok": True, "reminders_fired": len(reminders)})
 
     scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar, db=db)
