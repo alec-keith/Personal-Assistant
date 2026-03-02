@@ -39,7 +39,8 @@ tavily-python>=0.5.0
 # Stocks (Yahoo Finance — no key needed)
 yfinance>=0.2.0
 
-# TTS (cross-platform male voice — Microsoft Edge Neural TTS, free, no API key)
+# TTS — OpenAI (primary, requires OPENAI_API_KEY) + edge-tts (free fallback)
+openai>=1.0.0
 edge-tts>=6.1.0
 
 # Email (Gmail REST API + Yahoo IMAP — Yahoo uses stdlib imaplib, no extra dep)

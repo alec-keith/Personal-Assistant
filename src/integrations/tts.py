@@ -1,9 +1,10 @@
 """
 Text-to-speech — cross-platform, male voice.
 
-Primary: edge-tts (Microsoft Edge Neural TTS, free, no API key, works on Railway/Linux).
-         Voice: en-US-ChristopherNeural — deep, natural American male.
-Fallback: macOS built-in `say` with "Alex" (male voice, Mac only).
+Primary: OpenAI TTS (tts-1-hd, onyx voice — deep, natural male, requires OPENAI_API_KEY).
+Fallback: edge-tts (Microsoft Edge Neural TTS, free, no API key, works on Railway/Linux).
+         Voice: en-US-ChristopherNeural — deep natural American male.
+Final fallback: macOS built-in `say` with "Alex" (male voice, Mac only).
 
 Output is an MP3/AIFF file playable via FFmpegPCMAudio in Discord voice channels.
 """
@@ -16,6 +17,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 EDGE_VOICE = "en-US-ChristopherNeural"  # deep natural male voice
+OPENAI_VOICE = "onyx"                   # deep male — most natural option
+OPENAI_MODEL = "tts-1-hd"              # highest quality
 
 
 async def synthesize(text: str) -> Path | None:
@@ -25,7 +28,30 @@ async def synthesize(text: str) -> Path | None:
     """
     spoken = text[:400]
 
-    # Primary: edge-tts — free, no API key, natural male voice, works on Linux
+    # Primary: OpenAI TTS — most natural, requires OPENAI_API_KEY
+    try:
+        from config import settings
+        if settings.openai_api_key:
+            from openai import AsyncOpenAI  # type: ignore
+
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                out_path = Path(f.name)
+
+            response = await client.audio.speech.create(
+                model=OPENAI_MODEL,
+                voice=OPENAI_VOICE,
+                input=spoken,
+                response_format="mp3",
+            )
+            out_path.write_bytes(response.content)
+            return out_path
+    except ImportError:
+        logger.debug("openai package not installed, falling back to edge-tts")
+    except Exception:
+        logger.warning("OpenAI TTS failed, falling back to edge-tts", exc_info=True)
+
+    # Fallback: edge-tts — free, no API key, natural male voice, works on Linux
     try:
         import edge_tts  # type: ignore
 
@@ -41,14 +67,14 @@ async def synthesize(text: str) -> Path | None:
     except Exception:
         logger.warning("edge-tts failed, trying macOS say", exc_info=True)
 
-    # Fallback: macOS say with Alex (male voice)
+    # Final fallback: macOS say with Alex (male voice)
     try:
         import subprocess
 
         with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as f:
             out_path = Path(f.name)
 
-        await asyncio.get_event_loop().run_in_executor(
+        await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: subprocess.run(
                 ["say", "-v", "Alex", "-o", str(out_path), spoken],
@@ -59,7 +85,7 @@ async def synthesize(text: str) -> Path | None:
         return out_path
 
     except FileNotFoundError:
-        logger.warning("No TTS available — install edge-tts: pip install edge-tts")
+        logger.warning("No TTS available — set OPENAI_API_KEY or install edge-tts")
         return None
     except Exception:
         logger.exception("TTS synthesis failed")

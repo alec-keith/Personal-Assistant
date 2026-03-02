@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     bluebubbles_password: str = ""      # BB server password
     bluebubbles_imessage_handle: str = ""  # your phone number or Apple ID email
 
+    # OpenAI (TTS — tts-1-hd, onyx voice)
+    openai_api_key: str = ""
+
     # Groq (Whisper transcription — free tier)
     groq_api_key: str = ""
 
