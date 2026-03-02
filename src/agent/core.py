@@ -525,6 +525,16 @@ class AgentCore:
         """
         text = user_text.lower().strip()
 
+        # Location reminders → always Sonnet (Haiku misses the save_note tool call)
+        LOCATION_REMINDER_PATTERNS = (
+            "when i get home", "when i arrive", "when i'm home", "when i am home",
+            "when i reach home", "when i get to the office", "when i get to work",
+            "when i arrive at", "when i get back",
+        )
+        if any(p in text for p in LOCATION_REMINDER_PATTERNS):
+            logger.debug("Model router → Sonnet (location reminder)")
+            return settings.claude_model_complex
+
         # Explicit action commands → always Sonnet
         SIMPLE_STARTS = (
             "add ", "create ", "schedule ", "remind ", "set a ", "list ",
