@@ -177,6 +177,13 @@ async def main() -> None:
             ]
             await send_fn(f"{random.choice(intros)}\n{lines}")
 
+            # Add each reminder as a Todoist task due today
+            for reminder in reminders:
+                try:
+                    await todoist.add_task(reminder, due_string="today", labels=["location"])
+                except Exception:
+                    logger.warning("Failed to create Todoist task for location reminder: %r", reminder)
+
             # Save to memory so Roman has context, then schedule a follow-up check
             tz = ZoneInfo(settings.agent_timezone)
             task_summary = ", ".join(reminders)
