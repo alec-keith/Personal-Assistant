@@ -50,6 +50,7 @@ class AgentCore:
         self._history: list[dict] = []
         self._tz = ZoneInfo(settings.agent_timezone)
         self._user_profile: str = ""  # cached from DB; refreshed on each message + after update
+        self._current_model: str = settings.claude_model_simple  # set per-message by router
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -59,6 +60,9 @@ class AgentCore:
         """Process one user message and return the assistant's reply."""
         # Refresh profile cache on each message (cheap DB call, ensures freshness)
         self._user_profile = await self._memory.get_profile()
+
+        # Route to the right model before entering the loop
+        self._current_model = self._select_model(user_text)
 
         self._history.append({"role": "user", "content": user_text})
         self._trim_history()
@@ -85,7 +89,7 @@ class AgentCore:
 
         while True:
             response = await self._client.messages.create(
-                model=settings.claude_model,
+                model=self._current_model,
                 max_tokens=4096,
                 system=build_system_prompt(self._calendar.calendar_names(), self._user_profile),
                 tools=TOOLS,
@@ -289,6 +293,57 @@ class AgentCore:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _select_model(self, user_text: str) -> str:
+        """
+        Route to Opus for complex reasoning; Sonnet for simple tasks.
+
+        Simple  → Sonnet: action commands, calendar/task/reminder ops, short factual questions
+        Complex → Opus:   analysis, strategy, decisions, brainstorming, long brain dumps
+        """
+        text = user_text.lower().strip()
+
+        # Explicit action commands → always Sonnet
+        SIMPLE_STARTS = (
+            "add ", "create ", "schedule ", "remind ", "set a ", "list ",
+            "show ", "complete ", "mark ", "delete ", "cancel ", "move ",
+            "update ", "check my", "what's on", "what do i have",
+            "any tasks", "am i free", "add to ", "what are my",
+        )
+        SIMPLE_CONTAINS = (
+            "add task", "add to todoist", "add to calendar", "add event",
+            "remind me", "set a reminder", "send me a message",
+            "what's on my calendar", "schedule a", "message me",
+        )
+        if len(text) < 250 and (
+            any(text.startswith(p) for p in SIMPLE_STARTS)
+            or any(p in text for p in SIMPLE_CONTAINS)
+        ):
+            logger.debug("Model router → Sonnet (simple action)")
+            return settings.claude_model_simple
+
+        # Deep reasoning signals → Opus
+        COMPLEX_SIGNALS = (
+            "help me think", "help me figure", "should i ", "what do you think",
+            "give me advice", "advise me", "analyze", "analysis", "strategy",
+            "strategize", "pros and cons", "tradeoff", "trade-off",
+            "struggling", "stuck on", "stuck with", "decision", "decide",
+            "how should i", "figure out", "make sense of", "work through",
+            "talk through", "think through", "break down", "deep dive",
+            "what would you do", "brainstorm", "brain dump",
+        )
+        if any(p in text for p in COMPLEX_SIGNALS):
+            logger.debug("Model router → Opus (complex reasoning signal)")
+            return settings.claude_model_complex
+
+        # Long messages are usually brain dumps or nuanced requests → Opus
+        if len(user_text) > 300:
+            logger.debug("Model router → Opus (long message)")
+            return settings.claude_model_complex
+
+        # Default: Sonnet handles it
+        logger.debug("Model router → Sonnet (default)")
+        return settings.claude_model_simple
 
     def _trim_history(self) -> None:
         """Keep the in-context history from growing unbounded."""

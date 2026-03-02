@@ -11,9 +11,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Claude
+    # Claude — model routing
     anthropic_api_key: str
-    claude_model: str = "claude-opus-4-6"
+    claude_model_complex: str = "claude-opus-4-6"    # deep analysis, decisions, strategy
+    claude_model_simple: str = "claude-sonnet-4-6"   # tasks, calendar, reminders, quick answers
 
     # Discord (optional — used as fallback when BlueBubbles is unavailable)
     discord_bot_token: str = ""
