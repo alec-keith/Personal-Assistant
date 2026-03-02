@@ -45,10 +45,14 @@ SPEECH_ENERGY_THRESHOLD = 400
 # Voice capture sink
 # ------------------------------------------------------------------
 
-class SilenceDetectingSink(discord.sinks.AudioSink):
+class SilenceDetectingSink(discord.sinks.Sink):
     """
     Captures raw PCM audio from Discord voice for a single target user.
-    After SILENCE_SECS of no audio packets the utterance is fire via on_utterance(wav_bytes).
+    After SILENCE_SECS of no audio packets the utterance is fired via on_utterance(wav_bytes).
+
+    Inherits discord.sinks.Sink (not AudioSink) so start_recording's isinstance
+    check passes.  super().__init__() sets up the vc/filters/audio_data state
+    that discord.py internals expect.
 
     Thread model: write() is called from discord.py's audio receive thread.
     Data is pushed to an asyncio.Queue via call_soon_threadsafe so the event
@@ -62,6 +66,7 @@ class SilenceDetectingSink(discord.sinks.AudioSink):
     SAMPLE_WIDTH = 2     # 16-bit PCM
 
     def __init__(self, target_user_id: int, loop: asyncio.AbstractEventLoop) -> None:
+        super().__init__()  # required: sets vc, filters, audio_data on the base Sink
         self.target_user_id = target_user_id
         self._loop = loop
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -71,10 +76,11 @@ class SilenceDetectingSink(discord.sinks.AudioSink):
         return False  # request decoded PCM
 
     def write(self, data, user) -> None:
-        if user.id != self.target_user_id:
+        if not hasattr(user, "id") or user.id != self.target_user_id:
             return
-        # Thread-safe push to event loop
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, bytes(data.data))
+        # data is AudioData (has .data bytes) in discord.py 2.x
+        raw = bytes(data.data) if hasattr(data, "data") else bytes(data)
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, raw)
 
     def cleanup(self) -> None:
         # Signal listen() to exit
@@ -286,7 +292,7 @@ class DiscordGateway(MessagingGateway):
         if not self._voice_client or not self._voice_client.is_connected():
             return
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._sink = SilenceDetectingSink(settings.discord_user_id, loop)
         self._listen_task = asyncio.create_task(
             self._sink.listen(self._on_voice_utterance)
