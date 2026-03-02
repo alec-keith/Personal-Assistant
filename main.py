@@ -17,6 +17,7 @@ Deploy to Railway:
 import asyncio
 import logging
 import random
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -150,6 +151,10 @@ async def main() -> None:
 
         logger.error("No gateway available to send proactive message")
 
+    async def clean_send_fn(text: str) -> None:
+        """Strip internal task IDs before delivering any proactive message."""
+        await send_fn(re.sub(r"\s*\[id:[^\]]+\]", "", text))
+
     # -- Location-arrived webhook (silent, no Discord message needed) --
     @app.post("/location-arrived")
     async def location_arrived(request: Request) -> JSONResponse:
@@ -175,7 +180,7 @@ async def main() -> None:
                 f"Glad you made it {loc_phrase}. Heads up on these:",
                 f"You're {loc_phrase} — don't forget:",
             ]
-            await send_fn(f"{random.choice(intros)}\n{lines}")
+            await clean_send_fn(f"{random.choice(intros)}\n{lines}")
 
             # Add each reminder as a Todoist task (with due date if one was specified)
             for r in reminders:
@@ -212,7 +217,7 @@ async def main() -> None:
 
         return JSONResponse({"ok": True, "reminders_fired": len(reminders)})
 
-    scheduler = ProactiveScheduler(send_fn=send_fn, todoist=todoist, calendar=calendar, db=db)
+    scheduler = ProactiveScheduler(send_fn=clean_send_fn, todoist=todoist, calendar=calendar, db=db)
     agent._scheduler = scheduler  # give agent full scheduler access
     await scheduler.initialize()  # load persistent jobs from DB
     scheduler.start()
