@@ -17,7 +17,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 EDGE_VOICE = "en-US-ChristopherNeural"  # deep natural male voice
-OPENAI_VOICE = "onyx"                   # deep male — most natural option
+OPENAI_VOICE = "arbor"                  # arbor voice
 OPENAI_MODEL = "tts-1-hd"              # highest quality
 
 
