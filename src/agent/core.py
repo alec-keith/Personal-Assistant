@@ -22,6 +22,7 @@ from config import settings
 from src.memory.store import MemoryStore
 from src.integrations.todoist import TodoistClient
 from src.integrations.calendar import CalendarClient
+from src.integrations.clickup import ClickUpClient
 from .prompts import build_system_prompt
 from .tools import TOOLS
 
@@ -38,6 +39,7 @@ class AgentCore:
         memory: MemoryStore,
         todoist: TodoistClient,
         calendar: CalendarClient,
+        clickup: ClickUpClient | None = None,
         # Injected so the agent can schedule proactive messages
         schedule_reminder_fn: Callable[[str, datetime], Awaitable[None]] | None = None,
     ) -> None:
@@ -45,6 +47,7 @@ class AgentCore:
         self._memory = memory
         self._todoist = todoist
         self._calendar = calendar
+        self._clickup = clickup
         self._schedule_reminder = schedule_reminder_fn
         self._scheduler = None  # injected from main.py after creation
         self._history: list[dict] = []
@@ -257,6 +260,55 @@ class AgentCore:
             cal = result.get("calendar", "")
             cal_tag = f" [{cal}]" if cal else ""
             return f"Event added: '{result['title']}' at {result['start']}{cal_tag}"
+
+        # --- ClickUp ---
+        if name == "clickup_list_tasks":
+            if not self._clickup:
+                return "ClickUp not configured — set CLICKUP_API_TOKEN."
+            tasks = await self._clickup.list_tasks(
+                list_id=inputs.get("list_id"),
+                space_name=inputs.get("space_name"),
+                statuses=inputs.get("statuses"),
+                overdue_only=inputs.get("overdue_only", False),
+            )
+            return self._clickup.format_tasks_summary(tasks)
+
+        if name == "clickup_get_lists":
+            if not self._clickup:
+                return "ClickUp not configured — set CLICKUP_API_TOKEN."
+            return await self._clickup.format_lists_summary()
+
+        if name == "clickup_create_task":
+            if not self._clickup:
+                return "ClickUp not configured — set CLICKUP_API_TOKEN."
+            task = await self._clickup.create_task(
+                list_id=inputs["list_id"],
+                name=inputs["name"],
+                description=inputs.get("description"),
+                status=inputs.get("status"),
+                priority=inputs.get("priority"),
+                due_date_str=inputs.get("due_date_str"),
+            )
+            return f"Task created: '{task['name']}' (id={task['id']})"
+
+        if name == "clickup_update_task":
+            if not self._clickup:
+                return "ClickUp not configured — set CLICKUP_API_TOKEN."
+            task = await self._clickup.update_task(
+                task_id=inputs["task_id"],
+                name=inputs.get("name"),
+                description=inputs.get("description"),
+                status=inputs.get("status"),
+                priority=inputs.get("priority"),
+                due_date_str=inputs.get("due_date_str"),
+            )
+            return f"Task {inputs['task_id']} updated."
+
+        if name == "clickup_delete_task":
+            if not self._clickup:
+                return "ClickUp not configured — set CLICKUP_API_TOKEN."
+            await self._clickup.delete_task(inputs["task_id"])
+            return f"Task {inputs['task_id']} deleted."
 
         # --- Scheduling ---
         if name == "schedule_reminder":

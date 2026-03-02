@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # NewsAPI (news headlines — free 100 req/day at newsapi.org)
     newsapi_key: str = ""
 
+    # ClickUp (task management)
+    clickup_api_token: str = ""
+
     # Default location for weather (no key needed — Open-Meteo is free)
     user_location: str = "New York"
 

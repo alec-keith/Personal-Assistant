@@ -30,6 +30,7 @@ from src.memory.database import Database
 from src.memory.store import MemoryStore
 from src.integrations.todoist import TodoistClient
 from src.integrations.calendar import CalendarClient
+from src.integrations.clickup import ClickUpClient
 from src.agent.core import AgentCore
 from src.scheduler.proactive import ProactiveScheduler
 from src.integrations.messaging.discord_gateway import DiscordGateway
@@ -75,6 +76,7 @@ async def main() -> None:
     memory = MemoryStore(db=db)
     todoist = TodoistClient()
     calendar = CalendarClient()
+    clickup = ClickUpClient() if settings.clickup_api_token else None
 
     # -- FastAPI app (needed even if BB disabled, for Railway health checks) --
     app = build_app()
@@ -84,6 +86,7 @@ async def main() -> None:
         memory=memory,
         todoist=todoist,
         calendar=calendar,
+        clickup=clickup,
         schedule_reminder_fn=None,  # patched below
     )
 

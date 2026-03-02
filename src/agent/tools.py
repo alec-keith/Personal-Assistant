@@ -322,6 +322,105 @@ TOOLS: list[dict] = [
             "required": ["url"],
         },
     },
+    # ------------------------------------------------------------------ ClickUp
+    {
+        "name": "clickup_list_tasks",
+        "description": (
+            "List tasks from ClickUp. Can filter by list, space, status, or show only overdue tasks. "
+            "Use this when the user asks about ClickUp tasks, work items, or project status."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "list_id": {
+                    "type": "string",
+                    "description": "ClickUp list ID to fetch tasks from. Use clickup_get_lists to find IDs.",
+                },
+                "space_name": {
+                    "type": "string",
+                    "description": "Filter by space name (e.g. 'Work', 'Personal'). Used when list_id not provided.",
+                },
+                "statuses": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by status names, e.g. ['Open', 'In Progress']",
+                },
+                "overdue_only": {
+                    "type": "boolean",
+                    "description": "Return only overdue tasks",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
+        "name": "clickup_get_lists",
+        "description": (
+            "Show all ClickUp spaces and lists with their IDs. "
+            "Call this first if you need a list_id for other ClickUp tools."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "clickup_create_task",
+        "description": "Create a new task in a specific ClickUp list.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "list_id": {
+                    "type": "string",
+                    "description": "The ClickUp list ID to create the task in",
+                },
+                "name": {"type": "string", "description": "Task name"},
+                "description": {"type": "string", "description": "Task description / notes"},
+                "status": {"type": "string", "description": "Initial status (e.g. 'Open', 'In Progress')"},
+                "priority": {
+                    "type": "integer",
+                    "enum": [1, 2, 3, 4],
+                    "description": "1=urgent, 2=high, 3=normal, 4=low",
+                },
+                "due_date_str": {
+                    "type": "string",
+                    "description": "Due date as 'today', 'tomorrow', 'YYYY-MM-DD', or 'YYYY-MM-DD HH:MM'",
+                },
+            },
+            "required": ["list_id", "name"],
+        },
+    },
+    {
+        "name": "clickup_update_task",
+        "description": "Update a ClickUp task — change its name, status, priority, due date, or description.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The ClickUp task ID"},
+                "name": {"type": "string", "description": "New task name"},
+                "description": {"type": "string", "description": "New description"},
+                "status": {"type": "string", "description": "New status (e.g. 'Complete', 'In Progress')"},
+                "priority": {
+                    "type": "integer",
+                    "enum": [1, 2, 3, 4],
+                    "description": "1=urgent, 2=high, 3=normal, 4=low",
+                },
+                "due_date_str": {
+                    "type": "string",
+                    "description": "New due date as 'today', 'tomorrow', 'YYYY-MM-DD', or 'YYYY-MM-DD HH:MM'",
+                },
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "clickup_delete_task",
+        "description": "Permanently delete a ClickUp task. Always confirm with the user before calling this.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The ClickUp task ID to delete"},
+            },
+            "required": ["task_id"],
+        },
+    },
     # ------------------------------------------------------------------ Scheduling
     {
         "name": "schedule_reminder",
