@@ -271,9 +271,8 @@ class DiscordGateway(MessagingGateway):
     async def send_message(self, text: str) -> None:
         # Prefer server channel (triggers @mention notification) over DM
         if self._text_channel is not None:
-            mention = f"<@{settings.discord_user_id}>"
             chunks = _chunk(text, 1900)
-            await self._text_channel.send(f"{mention} {chunks[0]}")
+            await self._text_channel.send(chunks[0])
             for chunk in chunks[1:]:
                 await self._text_channel.send(chunk)
         elif self._dm_channel is not None:
