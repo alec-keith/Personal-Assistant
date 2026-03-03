@@ -74,6 +74,16 @@ class MemoryStore:
     def _available(self) -> bool:
         return self._db is not None
 
+    @property
+    def _has_vector(self) -> bool:
+        return self._db is not None and self._db.has_pgvector
+
+    async def _maybe_embed(self, text: str) -> list[float] | None:
+        """Only generate embeddings if pgvector is available on the DB."""
+        if not self._has_vector:
+            return None
+        return await _embed(text)
+
     # ------------------------------------------------------------------
     # User Profile
     # ------------------------------------------------------------------
@@ -143,7 +153,7 @@ class MemoryStore:
     async def search_conversations(self, query: str, n: int = 5) -> list[str]:
         if not self._available:
             return []
-        embedding = await _embed(query)
+        embedding = await self._maybe_embed(query)
         async with self._db.pool.acquire() as conn:
             if embedding is not None:
                 # Semantic search: cosine distance (lower = more similar)
@@ -212,7 +222,7 @@ class MemoryStore:
     async def search_notes(self, query: str, n: int = 5) -> list[str]:
         if not self._available:
             return []
-        embedding = await _embed(query)
+        embedding = await self._maybe_embed(query)
         async with self._db.pool.acquire() as conn:
             if embedding is not None:
                 rows = await conn.fetch(
@@ -374,7 +384,7 @@ class MemoryStore:
         if not self._available:
             return []
         stores = stores or ["long_term", "working", "episodic_log", "pattern_store"]
-        embedding = await _embed(query)
+        embedding = await self._maybe_embed(query)
         async with self._db.pool.acquire() as conn:
             if embedding is not None:
                 rows = await conn.fetch(

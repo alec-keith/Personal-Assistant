@@ -101,6 +101,7 @@ class Database:
     def __init__(self, url: str) -> None:
         self._url = url
         self._pool: asyncpg.Pool | None = None
+        self.has_pgvector: bool = False
 
     async def initialize(self) -> None:
         self._pool = await asyncpg.create_pool(self._url, min_size=1, max_size=5)
@@ -110,6 +111,7 @@ class Database:
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(VECTOR_SCHEMA)
+            self.has_pgvector = True
             logger.info("PostgreSQL database initialized (pgvector enabled)")
         except Exception:
             logger.warning(

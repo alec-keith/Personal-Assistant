@@ -456,7 +456,7 @@ class AgentCore:
             [b for b in content_blocks if b.type == "tool_use"], results
         ):
             if isinstance(result, Exception):
-                logger.exception("Tool %s failed", block.name)
+                logger.error("Tool %s failed: %s: %s", block.name, type(result).__name__, result)
                 output = f"Error: {result}"
             else:
                 output = result
