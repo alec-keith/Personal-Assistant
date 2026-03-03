@@ -45,6 +45,36 @@ CREATE TABLE IF NOT EXISTS user_profile (
 );
 
 INSERT INTO user_profile (id, content) VALUES (1, '') ON CONFLICT DO NOTHING;
+
+-- Roman-Elite v1.1: Unified memory table (long_term, working, episodic_log, pattern_store)
+CREATE TABLE IF NOT EXISTS memory (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    store       TEXT        NOT NULL,
+    content     TEXT        NOT NULL,
+    metadata    JSONB       NOT NULL DEFAULT '{}',
+    tags        TEXT[]      NOT NULL DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS memory_store_idx ON memory (store);
+CREATE INDEX IF NOT EXISTS memory_expires_idx ON memory (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS memory_tags_idx ON memory USING GIN (tags);
+CREATE INDEX IF NOT EXISTS memory_store_created_idx ON memory (store, created_at DESC);
+
+-- Roman-Elite v1.1: Onboarding state (single row)
+CREATE TABLE IF NOT EXISTS onboarding_state (
+    id              INTEGER     PRIMARY KEY DEFAULT 1,
+    status          TEXT        NOT NULL DEFAULT 'not_started',
+    current_wave_id TEXT,
+    question_index  INTEGER     NOT NULL DEFAULT 0,
+    completed_waves TEXT[]      NOT NULL DEFAULT '{}',
+    answers         JSONB       NOT NULL DEFAULT '{}',
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO onboarding_state (id) VALUES (1) ON CONFLICT DO NOTHING;
 """
 
 # pgvector enhancements — attempted separately; fails gracefully if extension unavailable
@@ -59,6 +89,11 @@ CREATE INDEX IF NOT EXISTS conversations_embedding_idx
 
 CREATE INDEX IF NOT EXISTS notes_embedding_idx
     ON notes USING hnsw (embedding vector_cosine_ops);
+
+ALTER TABLE memory ADD COLUMN IF NOT EXISTS embedding vector(1024);
+
+CREATE INDEX IF NOT EXISTS memory_embedding_idx
+    ON memory USING hnsw (embedding vector_cosine_ops);
 """
 
 

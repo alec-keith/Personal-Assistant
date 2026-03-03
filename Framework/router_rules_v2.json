@@ -1,0 +1,168 @@
+{
+  "bundle": "router_rules",
+  "version": "2.0.0",
+  "description": "Updated Router Rules with Complexity Matrix Integration + Onboarding Intent",
+  "routing_engine": {
+    "steps": [
+      "1. Classify intent",
+      "2. Determine complexity level from complexity_matrix.json",
+      "3. Apply escalation triggers",
+      "4. Select specialists (respect committee cap)",
+      "5. Pull required tools",
+      "6. Execute orchestration flow"
+    ]
+  },
+  "complexity_integration": {
+    "source_file": "complexity_matrix.json",
+    "logic": "Use intent_defaults.level as base. Apply escalation_triggers and specialist_add_rules. Enforce committee_cap_policy."
+  },
+  "intents": [
+    {
+      "intent": "task_capture_single",
+      "complexity_level": 0,
+      "direct_orchestrator_handling": true,
+      "specialists": [],
+      "tool_pulls": [
+        "todoist.read_open"
+      ]
+    },
+    {
+      "intent": "task_prioritize",
+      "complexity_level": 1,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Exec",
+        "Roman-Critic"
+      ],
+      "tool_pulls": [
+        "todoist.read_open",
+        "calendar.read_7d"
+      ]
+    },
+    {
+      "intent": "plan_day",
+      "complexity_level": 1,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Exec",
+        "Roman-Critic"
+      ],
+      "tool_pulls": [
+        "calendar.read_today",
+        "todoist.read_open",
+        "email.read_headers_unread"
+      ]
+    },
+    {
+      "intent": "plan_week",
+      "complexity_level": 2,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Exec",
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d",
+        "todoist.read_open",
+        "email.read_headers_unread"
+      ]
+    },
+    {
+      "intent": "email_triage",
+      "complexity_level": 1,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Exec",
+        "Roman-Systems",
+        "Roman-Critic"
+      ],
+      "tool_pulls": [
+        "email.read_headers_unread"
+      ]
+    },
+    {
+      "intent": "decision_support",
+      "complexity_level": 2,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Strategy",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d"
+      ]
+    },
+    {
+      "intent": "systems_build",
+      "complexity_level": 2,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Systems",
+        "Roman-Strategy",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "todoist.read_open"
+      ]
+    },
+    {
+      "intent": "audit_life",
+      "complexity_level": 2,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Exec",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d",
+        "todoist.read_open"
+      ]
+    },
+    {
+      "intent": "onboarding_interview",
+      "complexity_level": 2,
+      "direct_orchestrator_handling": false,
+      "specialists": [
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Finance",
+        "Roman-Exec",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d"
+      ]
+    }
+  ],
+  "intent_resolution": {
+    "multi_intent_allowed": true,
+    "priority_order_when_multiple": [
+      "onboarding_interview",
+      "plan_week",
+      "audit_life",
+      "decision_support",
+      "systems_build",
+      "plan_day",
+      "task_prioritize",
+      "email_triage",
+      "task_capture_single"
+    ],
+    "fallback_intent": "plan_day"
+  },
+  "committee_cap_enforcement": {
+    "enabled": true,
+    "rules": "Follow committee_cap_policy from complexity_matrix.json. Never exceed allowed specialist count."
+  }
+}

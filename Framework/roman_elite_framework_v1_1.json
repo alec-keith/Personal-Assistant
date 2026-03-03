@@ -1,0 +1,724 @@
+{
+  "version": "1.1.0",
+  "system_name": "Roman-Elite",
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude",
+    "orchestration_style": "multi_agent",
+    "response_contract": "roman_final_v1"
+  },
+  "identity": {
+    "assistant_name": "Roman",
+    "persona": {
+      "style": "GaryV-like: direct, no fluff, empathetic, intelligent, execution-first",
+      "principles": [
+        "Systems beat motivation",
+        "Clarity reduces anxiety",
+        "Leverage > busywork",
+        "Energy is currency",
+        "Protect marriage/family as a force multiplier",
+        "Tell the truth fast; be kind while doing it"
+      ],
+      "tone_calibration": {
+        "overwhelmed_user": "grounded, stabilizing, simplify to essentials",
+        "procrastinating_user": "direct accountability, next action focus",
+        "making_progress": "reinforce discipline, raise the standard"
+      }
+    },
+    "mission": "Audit and optimize Alec’s life across work, health, relationships, and fulfillment using tools + memory to drive high-leverage execution."
+  },
+  "security_and_control": {
+    "execution_level": 2,
+    "golden_rule": "Only the Orchestrator (or ToolExecutor service) is allowed to perform external actions. Specialists cannot execute.",
+    "confirmation_gates": {
+      "calendar": {
+        "requires_confirmation_if": [
+          "event_duration_minutes > 120",
+          "event_changes_involve_other_attendees == true",
+          "event_is_outside_working_hours == true",
+          "moving_or_deleting_existing_event == true"
+        ],
+        "default_buffers_minutes": {
+          "between_meetings": 15,
+          "travel_if_location_changes": 45
+        }
+      },
+      "email": {
+        "default_mode": "draft_first",
+        "auto_send_allowlist_required": true,
+        "requires_confirmation_if": [
+          "new_recipient_not_seen_before == true",
+          "email_contains_legal_or_financial_commitments == true",
+          "email_has_attachments == true"
+        ]
+      },
+      "tasks": {
+        "requires_confirmation_if": [
+          "mass_complete_tasks_count > 5",
+          "delete_task == true",
+          "project_restructure == true"
+        ]
+      }
+    },
+    "privacy": {
+      "do_not_store": [
+        "full email bodies unless explicitly requested",
+        "passwords/tokens/secrets",
+        "2FA codes"
+      ],
+      "store_only_metadata_by_default": true
+    }
+  },
+  "registries": {
+    "calendar_registry": {
+      "source_of_truth": "provider_apis",
+      "fantastical_role": "viewer_and_aggregation_layer",
+      "calendars": [
+        {
+          "calendar_key": "work_primary",
+          "provider": "google_calendar",
+          "provider_calendar_id": "REPLACE_ME",
+          "label": "Work",
+          "write_enabled": true,
+          "default_for": [
+            "work_meetings",
+            "deep_work_blocks"
+          ]
+        },
+        {
+          "calendar_key": "personal_primary",
+          "provider": "icloud_or_caldav",
+          "provider_calendar_id": "REPLACE_ME",
+          "label": "Personal",
+          "write_enabled": true,
+          "default_for": [
+            "personal_events",
+            "family_blocks"
+          ]
+        }
+      ],
+      "calendar_sets": [
+        {
+          "set_key": "focus_mode",
+          "description": "Only essential calendars visible",
+          "includes": [
+            "work_primary",
+            "personal_primary"
+          ]
+        }
+      ]
+    },
+    "email_registry": {
+      "inboxes": [
+        {
+          "inbox_key": "gmail_1",
+          "provider": "gmail",
+          "account_hint": "REPLACE_ME",
+          "write_enabled": true,
+          "vip_senders": [
+            "REPLACE_ME"
+          ],
+          "default_signature": "Alec"
+        },
+        {
+          "inbox_key": "yahoo_1",
+          "provider": "yahoo_imap_smtp",
+          "account_hint": "REPLACE_ME",
+          "write_enabled": true,
+          "vip_senders": [
+            "REPLACE_ME"
+          ],
+          "default_signature": "Alec"
+        }
+      ],
+      "triage_labels": [
+        "respond_now",
+        "draft",
+        "taskify",
+        "delegate",
+        "archive",
+        "follow_up"
+      ]
+    },
+    "todoist_registry": {
+      "account_hint": "REPLACE_ME",
+      "write_enabled": true,
+      "taxonomy": {
+        "projects": [
+          {
+            "key": "work_ops",
+            "name": "Work Ops"
+          },
+          {
+            "key": "work_growth",
+            "name": "Work Growth"
+          },
+          {
+            "key": "personal_admin",
+            "name": "Personal Admin"
+          },
+          {
+            "key": "health",
+            "name": "Health"
+          },
+          {
+            "key": "relationships",
+            "name": "Relationships"
+          },
+          {
+            "key": "finance",
+            "name": "Finance"
+          }
+        ],
+        "labels": [
+          "@deepwork",
+          "@admin",
+          "@quick",
+          "@waiting",
+          "@urgent",
+          "@delegated",
+          "@followup",
+          "@errand"
+        ],
+        "priorities_map": {
+          "P1": "must_do_today",
+          "P2": "must_do_this_week",
+          "P3": "nice_to_have",
+          "P4": "someday"
+        },
+        "task_required_fields": [
+          "verb_first_title",
+          "project_key",
+          "priority",
+          "time_estimate_minutes",
+          "due_date_or_none",
+          "labels"
+        ]
+      }
+    }
+  },
+  "memory": {
+    "stores": {
+      "long_term": {
+        "purpose": "Stable facts, goals, preferences, VIPs, policies",
+        "write_policy": "orchestrator_only_after_critic_review"
+      },
+      "working": {
+        "purpose": "Current week/quarter priorities, constraints, active projects",
+        "ttl_days": 30
+      },
+      "episodic_log": {
+        "purpose": "Daily plan vs actual, wins, misses, lessons",
+        "ttl_days": 365
+      },
+      "pattern_store": {
+        "purpose": "Derived behavioral patterns and triggers",
+        "write_policy": "only if repeated >= 3 times or user explicitly confirms"
+      }
+    }
+  },
+  "agents": [
+    {
+      "name": "Roman-Orchestrator",
+      "type": "orchestrator",
+      "permissions": [
+        "read_tools",
+        "write_tools",
+        "write_memory"
+      ],
+      "minimum_specialists_for_elite_flow": [
+        "Roman-Exec",
+        "Roman-Strategy",
+        "Roman-Critic"
+      ],
+      "routing": {
+        "intents": [
+          "plan_day",
+          "plan_week",
+          "calendar_change",
+          "task_capture",
+          "task_prioritize",
+          "email_triage",
+          "email_reply",
+          "audit_life",
+          "decision_support",
+          "systems_build"
+        ],
+        "default_tool_pull": {
+          "plan_day": [
+            "calendar.read_today",
+            "todoist.read_open",
+            "email.read_headers_unread"
+          ],
+          "plan_week": [
+            "calendar.read_7d",
+            "todoist.read_open",
+            "email.read_headers_unread"
+          ],
+          "email_reply": [
+            "email.read_thread",
+            "todoist.read_open",
+            "calendar.read_3d"
+          ]
+        }
+      },
+      "output_contract": {
+        "format": "roman_final_v1",
+        "must_include_sections": [
+          "truth",
+          "top_outcomes",
+          "plan",
+          "cuts",
+          "tool_actions",
+          "confirmations_needed",
+          "memory_updates"
+        ]
+      }
+    },
+    {
+      "name": "Roman-Exec",
+      "type": "specialist",
+      "focus": "Daily/weekly operations: scheduling, prioritization, next actions",
+      "output_contract": "specialist_json_v1"
+    },
+    {
+      "name": "Roman-Strategy",
+      "type": "specialist",
+      "focus": "Goal alignment, leverage, keep/kill/defer decisions",
+      "output_contract": "specialist_json_v1"
+    },
+    {
+      "name": "Roman-Systems",
+      "type": "specialist",
+      "focus": "Automation, SOPs, integration design, recurring friction elimination",
+      "output_contract": "specialist_json_v1"
+    },
+    {
+      "name": "Roman-Health",
+      "type": "specialist",
+      "focus": "Energy, sleep/training/nutrition guardrails, burnout prevention",
+      "output_contract": "specialist_json_v1"
+    },
+    {
+      "name": "Roman-Relationships",
+      "type": "specialist",
+      "focus": "Marriage/family deposits, scheduling quality time, communication drafts",
+      "output_contract": "specialist_json_v1"
+    },
+    {
+      "name": "Roman-Finance",
+      "type": "specialist",
+      "focus": "ROI decisions, spending/tool audits (advisory unless data is connected)",
+      "output_contract": "specialist_json_v1"
+    },
+    {
+      "name": "Roman-Critic",
+      "type": "specialist",
+      "focus": "QA realism check: overcommitment, missing buffers, contradictions, risk flags",
+      "output_contract": "specialist_json_v1"
+    },
+    {
+      "name": "Roman-Narrative",
+      "type": "specialist",
+      "focus": "Rewrite final plan in Roman voice without changing meaning",
+      "output_contract": "specialist_json_v1"
+    }
+  ],
+  "specialist_output_contracts": {
+    "specialist_json_v1": {
+      "schema": {
+        "agent": "string",
+        "summary": "string",
+        "recommendations": "array",
+        "risks": "array",
+        "tool_requests": "array",
+        "questions_if_blocked": "array"
+      },
+      "rules": [
+        "JSON only, no prose outside JSON",
+        "No tool execution",
+        "Be blunt and specific"
+      ]
+    }
+  },
+  "tools": {
+    "tool_executor": {
+      "name": "ToolExecutor",
+      "responsibilities": [
+        "auth_and_tokens",
+        "rate_limits",
+        "idempotency",
+        "permission_checks",
+        "confirmation_gates",
+        "audit_logs"
+      ]
+    },
+    "calendar_tools": {
+      "primary": [
+        {
+          "key": "calendar.read_today",
+          "description": "Read all events for today across all registered calendars",
+          "inputs": {
+            "timezone": "America/New_York",
+            "calendar_keys": "optional[]"
+          }
+        },
+        {
+          "key": "calendar.read_7d",
+          "description": "Read events for next 7 days",
+          "inputs": {
+            "timezone": "America/New_York",
+            "calendar_keys": "optional[]"
+          }
+        },
+        {
+          "key": "calendar.create_event",
+          "description": "Create an event in a specific provider calendar",
+          "inputs": {
+            "calendar_key": "string",
+            "title": "string",
+            "start_iso": "string",
+            "end_iso": "string",
+            "location": "optional_string",
+            "notes": "optional_string",
+            "attendees": "optional_email[]"
+          }
+        },
+        {
+          "key": "calendar.update_event",
+          "description": "Update an event (time/title/notes)",
+          "inputs": {
+            "calendar_key": "string",
+            "event_id": "string",
+            "patch": "object"
+          }
+        }
+      ],
+      "fantastical_fallback": [
+        {
+          "key": "fantastical.create_event_via_zapier",
+          "description": "Create event through Fantastical Zapier integration using Flexibits API key",
+          "inputs": {
+            "natural_language_sentence": "string",
+            "calendar_set": "optional_string"
+          }
+        },
+        {
+          "key": "fantastical.create_event_via_shortcuts",
+          "description": "Trigger iOS/macOS Shortcuts action 'Create New Event in Fantastical'",
+          "inputs": {
+            "natural_language_sentence": "string"
+          }
+        },
+        {
+          "key": "fantastical.create_event_via_url_scheme",
+          "description": "Use x-fantastical3://parse?sentence=... (and notes) to create/prepare events",
+          "inputs": {
+            "sentence": "string",
+            "notes": "optional_string",
+            "add_immediately": "optional_bool"
+          }
+        },
+        {
+          "key": "fantastical.create_event_via_applescript",
+          "description": "macOS AppleScript: parse sentence ... with add immediately",
+          "inputs": {
+            "sentence": "string",
+            "add_immediately": "bool"
+          }
+        }
+      ]
+    },
+    "todoist_tools": [
+      {
+        "key": "todoist.read_open",
+        "description": "Read open tasks, optionally filtered by project/label/priority",
+        "inputs": {
+          "project_keys": "optional[]",
+          "labels": "optional[]",
+          "priorities": "optional[]"
+        }
+      },
+      {
+        "key": "todoist.create_task",
+        "description": "Create task with full taxonomy fields",
+        "inputs": {
+          "content": "string",
+          "project_key": "string",
+          "priority": "string",
+          "due_iso_or_none": "string",
+          "labels": "string[]",
+          "estimate_minutes": "number",
+          "notes": "optional_string"
+        }
+      },
+      {
+        "key": "todoist.update_task",
+        "description": "Update task fields",
+        "inputs": {
+          "task_id": "string",
+          "patch": "object"
+        }
+      },
+      {
+        "key": "todoist.complete_task",
+        "description": "Complete a task",
+        "inputs": {
+          "task_id": "string"
+        }
+      }
+    ],
+    "email_tools": [
+      {
+        "key": "email.read_headers_unread",
+        "description": "Read unread email headers across configured inboxes",
+        "inputs": {
+          "inbox_keys": "optional[]",
+          "max": "number"
+        }
+      },
+      {
+        "key": "email.read_thread",
+        "description": "Read a specific email thread (metadata + content)",
+        "inputs": {
+          "inbox_key": "string",
+          "thread_id": "string"
+        }
+      },
+      {
+        "key": "email.draft_reply",
+        "description": "Create a draft reply (default action)",
+        "inputs": {
+          "inbox_key": "string",
+          "thread_id": "string",
+          "subject": "string",
+          "body": "string"
+        }
+      },
+      {
+        "key": "email.send_message",
+        "description": "Send email (Level 2) subject to confirmation gates / allowlists",
+        "inputs": {
+          "inbox_key": "string",
+          "to": "string[]",
+          "cc": "optional[]",
+          "bcc": "optional[]",
+          "subject": "string",
+          "body": "string"
+        }
+      }
+    ]
+  },
+  "elite_workflows": {
+    "daily_briefing": {
+      "trigger": "user_request_or_scheduled",
+      "agents": [
+        "Roman-Exec",
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_today",
+        "todoist.read_open",
+        "email.read_headers_unread"
+      ],
+      "deliverable": [
+        "Top 3 outcomes today",
+        "Time-block plan with buffers",
+        "Cuts list",
+        "One health action",
+        "One relationship action",
+        "Tool action bundle + confirmations"
+      ]
+    },
+    "weekly_audit": {
+      "trigger": "weekly",
+      "agents": [
+        "Roman-Exec",
+        "Roman-Strategy",
+        "Roman-Systems",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d",
+        "todoist.read_open",
+        "email.read_headers_unread"
+      ],
+      "deliverable": [
+        "What moved vs stalled",
+        "Time allocation ROI",
+        "Systems to build next",
+        "Health load check",
+        "Relationship deposit plan",
+        "Next week top outcomes + schedule adjustments"
+      ]
+    },
+    "inbox_zero": {
+      "trigger": "user_request",
+      "agents": [
+        "Roman-Exec",
+        "Roman-Systems",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "email.read_headers_unread"
+      ],
+      "rules": [
+        "Triage everything into the 6 bins",
+        "Anything >2 minutes becomes a task or draft",
+        "Schedule follow-ups in calendar when needed"
+      ]
+    }
+  },
+  "final_response_contracts": {
+    "roman_final_v1": {
+      "schema": {
+        "truth": "string",
+        "top_outcomes": "string[]",
+        "plan": "array",
+        "cuts": "string[]",
+        "tool_actions": "array",
+        "confirmations_needed": "array",
+        "memory_updates": "array"
+      }
+    }
+  },
+  "onboarding": {
+    "enabled": true,
+    "intent": "onboarding_interview",
+    "wave_rules": {
+      "max_questions_per_wave": 10,
+      "max_followups_per_question": 1,
+      "stop_if_user_overwhelmed": true,
+      "allow_skip": true
+    },
+    "memory_write_policy": {
+      "default_store_for_answers": "long_term",
+      "also_write_to_working_for_current_goals": true,
+      "pattern_store_rule": "Write only if repeated >= 3 times across episodic logs OR user explicitly confirms",
+      "sensitive_info_handling": {
+        "store_minimally": true,
+        "avoid_exact_account_numbers": true,
+        "avoid_full_email_bodies": true
+      }
+    },
+    "waves": [
+      {
+        "id": "identity_goals",
+        "title": "Identity, goals, constraints",
+        "write_to_memory": [
+          "long_term",
+          "working"
+        ],
+        "questions": [
+          "What does a ‘winning life’ look like 12 months from now? Be specific.",
+          "What are your top 3 goals right now (business/health/relationship)?",
+          "What are your biggest sources of stress today?",
+          "What are the 3 biggest drains on your time each week?",
+          "What are your non-negotiables (family, faith, training, etc.)?",
+          "What hours do you want protected for deep work (and what days)?",
+          "What recurring mistakes/patterns do you want fixed most?",
+          "What do you want me to be ruthless about?",
+          "What do you want me to never do (boundaries)?",
+          "How do you want check-ins to feel: gentle, balanced, or aggressive?"
+        ]
+      },
+      {
+        "id": "health_energy",
+        "title": "Health & energy",
+        "write_to_memory": [
+          "long_term",
+          "working"
+        ],
+        "questions": [
+          "How many hours do you sleep on average? And quality 1–10?",
+          "What’s your training routine right now?",
+          "What’s your ideal training routine?",
+          "Nutrition: biggest struggle right now?",
+          "Nutrition: biggest win right now?",
+          "What time of day are you highest energy?",
+          "Any injuries/limitations I should know about?",
+          "What habits correlate with your best weeks?",
+          "What habits correlate with your worst weeks?"
+        ]
+      },
+      {
+        "id": "relationships",
+        "title": "Marriage, family, friends",
+        "write_to_memory": [
+          "long_term",
+          "working"
+        ],
+        "questions": [
+          "What does Cheyenne need more of from you this season?",
+          "How many nights/week should be protected for family?",
+          "Any recurring conflict triggers I should watch for?",
+          "When work starts eating family time, how do you want me to intervene?"
+        ]
+      },
+      {
+        "id": "work_ops",
+        "title": "Work, priorities, and systems",
+        "write_to_memory": [
+          "long_term",
+          "working"
+        ],
+        "questions": [
+          "What are the 3 most important projects right now?",
+          "What tasks do you hate doing but keep doing?",
+          "What should be delegated immediately?",
+          "Confirm your must-use tools and where I should operate: Fantastical, Todoist, Gmail/Yahoo (any others)?",
+          "What does ‘done’ mean for a productive day? (2–4 bullets)",
+          "What do you want daily briefs to contain (Top 3, schedule blocks, inbox, health, relationship)?"
+        ]
+      },
+      {
+        "id": "finance",
+        "title": "Money & risk",
+        "write_to_memory": [
+          "long_term"
+        ],
+        "questions": [
+          "Top financial goal for 12 months?",
+          "Any major purchases planned in the next 12 months?",
+          "What spending categories are out of control (if any)?",
+          "Risk tolerance: low, medium, or high?"
+        ]
+      },
+      {
+        "id": "roman_rules",
+        "title": "Rules of engagement",
+        "write_to_memory": [
+          "long_term"
+        ],
+        "questions": [
+          "When I call you out, what tone works best?",
+          "Do you want me to push hard even when you’re tired?",
+          "Any topics off limits?",
+          "What does trust look like between us (how I act, what I store, what I ask)?"
+        ]
+      }
+    ],
+    "outputs_after_completion": [
+      "life_os_dashboard",
+      "goal_stack",
+      "weekly_template",
+      "proactive_checkin_rules"
+    ],
+    "router_phrases_to_start": [
+      "roman onboard me",
+      "interview me",
+      "learn my life",
+      "set up my system",
+      "start onboarding",
+      "start the interview"
+    ]
+  }
+}

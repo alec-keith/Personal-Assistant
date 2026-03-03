@@ -635,4 +635,201 @@ TOOLS: list[dict] = [
             "required": ["location"],
         },
     },
+    # ------------------------------------------------------------------ Orchestrator routing
+    {
+        "name": "route_to_specialists",
+        "description": (
+            "Route a message to specialist agents for deeper analysis. "
+            "Call this when you classify a message as Level 1 (Tactical) or Level 2 (Strategic). "
+            "NEVER call this for Level 0 (Atomic) messages — handle those directly. "
+            "Specialists return structured recommendations that you synthesize into a response."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "intent": {
+                    "type": "string",
+                    "description": "Classified intent from the routing rules, e.g. 'plan_day', 'task_prioritize', 'audit_life'",
+                },
+                "level": {
+                    "type": "integer",
+                    "enum": [1, 2],
+                    "description": "Complexity level: 1=Tactical (1-2 specialists), 2=Strategic (up to 7)",
+                },
+                "specialists": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Which specialists to consult. Options: Roman-Exec, Roman-Strategy, "
+                        "Roman-Systems, Roman-Health, Roman-Relationships, Roman-Finance, "
+                        "Roman-Critic, Roman-Narrative"
+                    ),
+                },
+                "tool_pulls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Data to gather before consulting specialists. Options: "
+                        "todoist.read_open, calendar.read_today, calendar.read_7d, "
+                        "email.read_headers_unread"
+                    ),
+                },
+                "context_summary": {
+                    "type": "string",
+                    "description": "Concise summary of the user's request and any relevant context for the specialists",
+                },
+            },
+            "required": ["intent", "level", "specialists", "context_summary"],
+        },
+    },
+    # ------------------------------------------------------------------ Onboarding
+    {
+        "name": "start_onboarding",
+        "description": (
+            "Begin the onboarding interview to learn about the user's life. "
+            "Call this when the user says things like 'onboard me', 'interview me', "
+            "'learn my life', or 'set up my system'."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "onboarding_save_answer",
+        "description": (
+            "Save the user's answer to the current onboarding question and advance to the next. "
+            "Call this after the user responds to an onboarding question with a concise summary."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question_id": {
+                    "type": "string",
+                    "description": "The question_id from the onboarding context (e.g. 'identity_story', 'health_sleep')",
+                },
+                "answer_summary": {
+                    "type": "string",
+                    "description": "Concise summary of the user's answer (key facts and details preserved)",
+                },
+                "is_followup": {
+                    "type": "boolean",
+                    "description": "True if this is a follow-up answer to the same question",
+                    "default": False,
+                },
+            },
+            "required": ["question_id", "answer_summary"],
+        },
+    },
+    {
+        "name": "onboarding_advance",
+        "description": (
+            "Skip the current question or advance to the next wave. "
+            "Call when the user says 'skip' or when all questions in a wave are complete."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "skip_wave": {
+                    "type": "boolean",
+                    "description": "True to advance to the next wave (call when all questions in current wave are done)",
+                    "default": False,
+                },
+            },
+        },
+    },
+    # ------------------------------------------------------------------ Elite memory stores
+    {
+        "name": "write_long_term_memory",
+        "description": (
+            "Save important information to long-term memory (never expires). "
+            "Use for significant facts, preferences, decisions, or patterns worth remembering forever."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "The information to store"},
+                "category": {
+                    "type": "string",
+                    "description": "Category: personal, business, health, relationships, preferences, decision",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags for organization and retrieval",
+                },
+            },
+            "required": ["content"],
+        },
+    },
+    {
+        "name": "write_working_memory",
+        "description": (
+            "Save a key-value entry to working memory (auto-expires in 30 days). "
+            "Use for current priorities, active goals, in-progress plans, and time-sensitive context."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Unique key, e.g. 'week_priorities', 'current_focus', 'active_project'",
+                },
+                "content": {"type": "string", "description": "The value to store"},
+                "metadata": {
+                    "type": "object",
+                    "description": "Optional metadata (JSON object)",
+                },
+            },
+            "required": ["key", "content"],
+        },
+    },
+    {
+        "name": "log_episode",
+        "description": (
+            "Log an episode to the episodic log (auto-expires in 365 days). "
+            "Use to record daily plans, actual outcomes, wins, misses, and lessons learned."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "ISO date string, e.g. '2026-03-03'",
+                },
+                "episode_type": {
+                    "type": "string",
+                    "enum": ["plan", "actual", "win", "miss", "lesson"],
+                    "description": "Type of episode",
+                },
+                "content": {"type": "string", "description": "The episode content"},
+            },
+            "required": ["date", "episode_type", "content"],
+        },
+    },
+    # ------------------------------------------------------------------ Elite memory search
+    {
+        "name": "search_elite_memory",
+        "description": (
+            "Search across the elite memory stores (long_term, working, episodic_log, pattern_store). "
+            "Use when you need context from structured memory beyond basic conversation/note search."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to search for"},
+                "stores": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["long_term", "working", "episodic_log", "pattern_store"],
+                    },
+                    "description": "Which stores to search (default: all)",
+                },
+                "n": {
+                    "type": "integer",
+                    "description": "Number of results (default 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]

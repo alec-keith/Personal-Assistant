@@ -1,10 +1,14 @@
 """
 PostgreSQL-backed memory store with hybrid search (semantic + full-text).
 
-Three tables:
+Tables (legacy):
   - conversations: rolling summaries of past exchanges
   - notes: explicit notes the user asks Roman to remember
   - user_profile: a single living document always injected into the system prompt
+
+Tables (Roman-Elite v1.1):
+  - memory: unified store with discriminator (long_term, working, episodic_log, pattern_store)
+  - onboarding_state: single-row interview progress tracker
 
 Semantic search uses pgvector + Voyage AI embeddings (voyage-3-lite, 1024 dims).
 Falls back to full-text search if VOYAGE_API_KEY is not configured.
@@ -13,9 +17,10 @@ If no database is configured (DATABASE_URL empty), all operations are
 silent no-ops so the bot still runs without memory.
 """
 
+import json
 import logging
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from .database import Database
@@ -302,3 +307,301 @@ class MemoryStore:
                 ids,
             )
         return [{"content": item["content"], "due_date": item["due_date"]} for item in due_now]
+
+    # ------------------------------------------------------------------
+    # Roman-Elite v1.1: Unified memory table
+    # ------------------------------------------------------------------
+
+    # TTL defaults per store (days). None = no expiry.
+    _STORE_TTL: dict[str, int | None] = {
+        "long_term": None,
+        "working": 30,
+        "episodic_log": 365,
+        "pattern_store": None,
+    }
+
+    async def save_memory(
+        self,
+        store: str,
+        content: str,
+        metadata: dict | None = None,
+        tags: list[str] | None = None,
+    ) -> str:
+        """Write an entry to the unified memory table with auto-TTL."""
+        if not self._available:
+            return ""
+        doc_id = str(uuid.uuid4())
+        ttl = self._STORE_TTL.get(store)
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=ttl)) if ttl else None
+        meta_json = json.dumps(metadata or {})
+        embedding = await _embed(content)
+        async with self._db.pool.acquire() as conn:
+            if embedding is not None:
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO memory (id, store, content, metadata, tags, embedding, expires_at)
+                        VALUES ($1, $2, $3, $4::jsonb, $5, $6::vector, $7)
+                        """,
+                        doc_id, store, content, meta_json, tags or [], _vec_to_pg(embedding), expires_at,
+                    )
+                except Exception:
+                    await conn.execute(
+                        """
+                        INSERT INTO memory (id, store, content, metadata, tags, expires_at)
+                        VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+                        """,
+                        doc_id, store, content, meta_json, tags or [], expires_at,
+                    )
+            else:
+                await conn.execute(
+                    """
+                    INSERT INTO memory (id, store, content, metadata, tags, expires_at)
+                    VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+                    """,
+                    doc_id, store, content, meta_json, tags or [], expires_at,
+                )
+        logger.info("Saved to %s: %s…", store, content[:60])
+        return doc_id
+
+    async def search_memory(
+        self,
+        query: str,
+        stores: list[str] | None = None,
+        n: int = 5,
+    ) -> list[dict]:
+        """Semantic/full-text search across specified stores, excludes expired."""
+        if not self._available:
+            return []
+        stores = stores or ["long_term", "working", "episodic_log", "pattern_store"]
+        embedding = await _embed(query)
+        async with self._db.pool.acquire() as conn:
+            if embedding is not None:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, store, content, metadata, tags, created_at FROM memory
+                    WHERE store = ANY($1)
+                      AND (expires_at IS NULL OR expires_at > NOW())
+                      AND embedding IS NOT NULL
+                    ORDER BY embedding <=> $2::vector
+                    LIMIT $3
+                    """,
+                    stores, _vec_to_pg(embedding), n,
+                )
+                if rows:
+                    return [
+                        {
+                            "id": str(r["id"]),
+                            "store": r["store"],
+                            "content": r["content"],
+                            "metadata": dict(r["metadata"]) if r["metadata"] else {},
+                            "tags": r["tags"] or [],
+                            "created_at": r["created_at"].isoformat(),
+                        }
+                        for r in rows
+                    ]
+
+            # Full-text fallback
+            rows = await conn.fetch(
+                """
+                SELECT id, store, content, metadata, tags, created_at FROM memory
+                WHERE store = ANY($1)
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                  AND to_tsvector('english', content) @@ plainto_tsquery('english', $2)
+                ORDER BY ts_rank(to_tsvector('english', content), plainto_tsquery('english', $2)) DESC
+                LIMIT $3
+                """,
+                stores, query, n,
+            )
+            if not rows:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, store, content, metadata, tags, created_at FROM memory
+                    WHERE store = ANY($1)
+                      AND (expires_at IS NULL OR expires_at > NOW())
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                    """,
+                    stores, n,
+                )
+        return [
+            {
+                "id": str(r["id"]),
+                "store": r["store"],
+                "content": r["content"],
+                "metadata": dict(r["metadata"]) if r["metadata"] else {},
+                "tags": r["tags"] or [],
+                "created_at": r["created_at"].isoformat(),
+            }
+            for r in rows
+        ]
+
+    async def get_memory_by_key(self, store: str, key: str) -> str | None:
+        """Look up a working memory entry by its metadata key."""
+        if not self._available:
+            return None
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT content FROM memory
+                WHERE store = $1
+                  AND metadata->>'key' = $2
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                store, key,
+            )
+        return row["content"] if row else None
+
+    async def delete_expired_memory(self) -> int:
+        """Remove expired entries. Returns count deleted."""
+        if not self._available:
+            return 0
+        async with self._db.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM memory WHERE expires_at IS NOT NULL AND expires_at < NOW()"
+            )
+        count = int(result.split()[-1])
+        if count:
+            logger.info("TTL cleanup: removed %d expired memory entries", count)
+        return count
+
+    # ------------------------------------------------------------------
+    # Roman-Elite v1.1: Pattern store
+    # ------------------------------------------------------------------
+
+    async def record_pattern(self, key: str, description: str) -> None:
+        """Increment evidence_count for an existing pattern, or insert a new one."""
+        if not self._available:
+            return
+        today = date.today().isoformat()
+        async with self._db.pool.acquire() as conn:
+            # Try to increment existing pattern
+            result = await conn.execute(
+                """
+                UPDATE memory SET
+                    metadata = jsonb_set(
+                        jsonb_set(metadata, '{occurrences}',
+                            (COALESCE((metadata->>'occurrences')::int, 0) + 1)::text::jsonb),
+                        '{last_observed}', $2::jsonb),
+                    updated_at = NOW()
+                WHERE store = 'pattern_store'
+                  AND metadata->>'pattern_key' = $1
+                """,
+                key, json.dumps(today),
+            )
+            if result.split()[-1] != "0":
+                return
+            # Insert new pattern
+            await self.save_memory(
+                store="pattern_store",
+                content=description,
+                metadata={
+                    "pattern_key": key,
+                    "occurrences": 1,
+                    "first_seen": today,
+                    "last_observed": today,
+                    "confirmed_by_user": False,
+                },
+                tags=["pattern"],
+            )
+
+    async def get_patterns(self, confirmed_only: bool = False) -> list[dict]:
+        """Return all patterns, optionally filtered to confirmed-only."""
+        if not self._available:
+            return []
+        async with self._db.pool.acquire() as conn:
+            if confirmed_only:
+                rows = await conn.fetch(
+                    """
+                    SELECT content, metadata FROM memory
+                    WHERE store = 'pattern_store'
+                      AND (metadata->>'confirmed_by_user')::boolean = true
+                    ORDER BY updated_at DESC
+                    """
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT content, metadata FROM memory
+                    WHERE store = 'pattern_store'
+                    ORDER BY updated_at DESC
+                    """
+                )
+        return [
+            {"content": r["content"], "metadata": dict(r["metadata"]) if r["metadata"] else {}}
+            for r in rows
+        ]
+
+    async def confirm_pattern(self, key: str) -> None:
+        """Mark a pattern as user-confirmed."""
+        if not self._available:
+            return
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE memory SET
+                    metadata = jsonb_set(metadata, '{confirmed_by_user}', 'true'::jsonb),
+                    updated_at = NOW()
+                WHERE store = 'pattern_store'
+                  AND metadata->>'pattern_key' = $1
+                """,
+                key,
+            )
+
+    # ------------------------------------------------------------------
+    # Roman-Elite v1.1: Onboarding state
+    # ------------------------------------------------------------------
+
+    async def get_onboarding_state(self) -> dict:
+        """Load onboarding state from DB."""
+        if not self._available:
+            return {"status": "not_started", "current_wave_id": None, "question_index": 0,
+                    "completed_waves": [], "answers": {}}
+        async with self._db.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM onboarding_state WHERE id = 1")
+        if not row:
+            return {"status": "not_started", "current_wave_id": None, "question_index": 0,
+                    "completed_waves": [], "answers": {}}
+        return {
+            "status": row["status"],
+            "current_wave_id": row["current_wave_id"],
+            "question_index": row["question_index"],
+            "completed_waves": list(row["completed_waves"] or []),
+            "answers": dict(row["answers"]) if row["answers"] else {},
+        }
+
+    async def update_onboarding_state(self, **kwargs) -> None:
+        """Update specific fields on the onboarding state row."""
+        if not self._available:
+            return
+        set_clauses = ["updated_at = NOW()"]
+        values = []
+        idx = 1
+        for key, val in kwargs.items():
+            if key == "status":
+                set_clauses.append(f"status = ${idx}")
+                values.append(val)
+            elif key == "current_wave_id":
+                set_clauses.append(f"current_wave_id = ${idx}")
+                values.append(val)
+            elif key == "question_index":
+                set_clauses.append(f"question_index = ${idx}")
+                values.append(val)
+            elif key == "completed_waves":
+                set_clauses.append(f"completed_waves = ${idx}")
+                values.append(val)
+            elif key == "answers":
+                set_clauses.append(f"answers = ${idx}::jsonb")
+                values.append(json.dumps(val))
+            else:
+                continue
+            idx += 1
+
+        if len(set_clauses) <= 1:
+            return
+
+        sql = f"UPDATE onboarding_state SET {', '.join(set_clauses)} WHERE id = 1"
+        async with self._db.pool.acquire() as conn:
+            await conn.execute(sql, *values)

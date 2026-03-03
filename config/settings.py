@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     port: int = 8080
 
     # ------------------------------------------------------------------
+    # Roman-Elite feature flags
+    # ------------------------------------------------------------------
+    enable_specialist_routing: bool = True   # Claude as Orchestrator + specialist agents
+    enable_tool_executor: bool = True        # Confirmation gates, idempotency, rate limits
+    enable_onboarding: bool = True           # 6-wave onboarding interview system
+
+    # ------------------------------------------------------------------
     # Computed helpers
     # ------------------------------------------------------------------
 

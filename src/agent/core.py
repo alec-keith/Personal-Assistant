@@ -28,6 +28,9 @@ from src.integrations.clickup import ClickUpClient
 from src.integrations.email import EmailManager
 from .prompts import build_system_prompt
 from .tools import TOOLS
+from .router import build_orchestrator_routing_context, route_to_specialists_handler
+from .tool_executor import ToolExecutor
+from .onboarding import OnboardingManager
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +93,8 @@ class AgentCore:
         calendar: CalendarClient,
         clickup: ClickUpClient | None = None,
         email: EmailManager | None = None,
+        onboarding: OnboardingManager | None = None,
+        tool_executor: ToolExecutor | None = None,
         # Injected so the agent can schedule proactive messages
         schedule_reminder_fn: Callable[[str, datetime], Awaitable[None]] | None = None,
     ) -> None:
@@ -99,12 +104,18 @@ class AgentCore:
         self._calendar = calendar
         self._clickup = clickup
         self._email = email
+        self._onboarding = onboarding
+        self._tool_executor = tool_executor or ToolExecutor()
         self._schedule_reminder = schedule_reminder_fn
         self._scheduler = None  # injected from main.py after creation
         self._history: list[dict] = []
         self._tz = ZoneInfo(settings.agent_timezone)
         self._user_profile: str = ""  # cached from DB; refreshed on each message + after update
         self._current_model: str = settings.claude_model_simple  # set per-message by router
+        # Orchestrator routing context (built once, cached)
+        self._routing_context: str | None = None
+        if settings.enable_specialist_routing:
+            self._routing_context = build_orchestrator_routing_context()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -179,7 +190,25 @@ class AgentCore:
         self._history.append({"role": "user", "content": content})
         self._trim_history()
 
-        response_text = await self._run_agent_loop()
+        # Build onboarding context if active
+        onboarding_context = None
+        if self._onboarding and settings.enable_onboarding:
+            try:
+                ob_state = await self._onboarding.get_state()
+                if ob_state["status"] == "in_progress":
+                    onboarding_context = self._onboarding.build_prompt_section(ob_state)
+            except Exception:
+                logger.debug("Failed to get onboarding state", exc_info=True)
+
+        # Voice: try Groq first (faster inference), fall back to Claude on any error
+        if for_voice and settings.groq_api_key:
+            try:
+                response_text = await self._run_groq_voice_loop()
+            except Exception:
+                logger.warning("Groq voice loop failed, falling back to Claude", exc_info=True)
+                response_text = await self._run_agent_loop(onboarding_context=onboarding_context)
+        else:
+            response_text = await self._run_agent_loop(onboarding_context=onboarding_context)
 
         # Strip internal task IDs before returning to user — model doesn't always follow the prompt
         response_text = re.sub(r"\s*\[id:[^\]]+\]", "", response_text)
@@ -195,21 +224,171 @@ class AgentCore:
         return response_text
 
     # ------------------------------------------------------------------
+    # Groq voice loop (fast inference, OpenAI-compatible format)
+    # ------------------------------------------------------------------
+
+    def _tools_to_openai_format(self) -> list[dict]:
+        """Convert Claude tool schema to OpenAI/Groq function-calling format."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("input_schema", {"type": "object", "properties": {}}),
+                },
+            }
+            for t in TOOLS
+        ]
+
+    def _history_for_groq(self) -> list[dict]:
+        """
+        Convert self._history (Claude format) to OpenAI-compatible messages for Groq.
+        Handles plain strings, tool_use assistant turns, and tool_result user turns.
+        Image content is dropped (voice doesn't need it).
+        """
+        result: list[dict] = []
+        for msg in self._history:
+            role = msg["role"]
+            content = msg["content"]
+
+            if isinstance(content, str):
+                result.append({"role": role, "content": content})
+                continue
+
+            if not isinstance(content, list):
+                continue
+
+            if role == "user":
+                tool_results = []
+                text_parts = []
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") == "tool_result":
+                        tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": item["tool_use_id"],
+                            "content": str(item.get("content", "")),
+                        })
+                    elif item.get("type") == "text":
+                        text_parts.append(item["text"])
+                if tool_results:
+                    result.extend(tool_results)
+                elif text_parts:
+                    result.append({"role": "user", "content": " ".join(text_parts)})
+
+            elif role == "assistant":
+                text_parts = []
+                tool_calls = []
+                for item in content:
+                    item_type = getattr(item, "type", None) or (
+                        item.get("type") if isinstance(item, dict) else None
+                    )
+                    if item_type == "text":
+                        t = getattr(item, "text", None) or (
+                            item.get("text") if isinstance(item, dict) else ""
+                        )
+                        if t:
+                            text_parts.append(t)
+                    elif item_type == "tool_use":
+                        tid = getattr(item, "id", None) or (item.get("id") if isinstance(item, dict) else "")
+                        tname = getattr(item, "name", None) or (item.get("name") if isinstance(item, dict) else "")
+                        tinput = getattr(item, "input", None) or (item.get("input") if isinstance(item, dict) else {})
+                        tool_calls.append({
+                            "id": tid,
+                            "type": "function",
+                            "function": {"name": tname, "arguments": json.dumps(tinput)},
+                        })
+                msg_dict: dict = {"role": "assistant", "content": " ".join(text_parts)}
+                if tool_calls:
+                    msg_dict["tool_calls"] = tool_calls
+                result.append(msg_dict)
+
+        return result
+
+    async def _run_groq_voice_loop(self) -> str:
+        """
+        Run voice inference via Groq (llama-3.3-70b-versatile).
+        Uses OpenAI-compatible format with full tool support.
+        Raises on failure so caller can fall back to Claude.
+        """
+        from groq import AsyncGroq
+
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        system_prompt = build_system_prompt(
+            self._calendar.calendar_names(),
+            self._user_profile,
+            routing_context=self._routing_context if settings.enable_specialist_routing else None,
+        )
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        messages.extend(self._history_for_groq())
+        tools = self._tools_to_openai_format()
+
+        while True:
+            response = await client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                max_tokens=1024,
+            )
+            choice = response.choices[0]
+
+            if choice.finish_reason == "stop":
+                return choice.message.content or "(no response)"
+
+            if choice.finish_reason == "tool_calls":
+                tool_calls = choice.message.tool_calls or []
+                messages.append({
+                    "role": "assistant",
+                    "content": choice.message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in tool_calls
+                    ],
+                })
+                for tc in tool_calls:
+                    try:
+                        inputs = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        inputs = {}
+                    result = await self._call_tool(tc.function.name, inputs, tc.id)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result if isinstance(result, str) else json.dumps(result),
+                    })
+                continue
+
+            return choice.message.content or "(no response)"
+
+    # ------------------------------------------------------------------
     # Agentic loop
     # ------------------------------------------------------------------
 
-    async def _run_agent_loop(self) -> str:
+    async def _run_agent_loop(self, onboarding_context: str | None = None) -> str:
         """
         Run the Claude API with tool use until the model stops calling tools.
         Returns the final text response.
         """
         messages = list(self._history)
+        routing_ctx = self._routing_context if settings.enable_specialist_routing else None
 
         while True:
             response = await self._client.messages.create(
                 model=self._current_model,
                 max_tokens=4096,
-                system=build_system_prompt(self._calendar.calendar_names(), self._user_profile),
+                system=build_system_prompt(
+                    self._calendar.calendar_names(),
+                    self._user_profile,
+                    routing_context=routing_ctx,
+                    onboarding_context=onboarding_context,
+                ),
                 tools=TOOLS,
                 messages=messages,
             )
@@ -271,6 +450,12 @@ class AgentCore:
     async def _call_tool(self, name: str, inputs: dict, tool_id: str) -> str:
         logger.info("Calling tool: %s(%s)", name, json.dumps(inputs)[:120])
 
+        # --- Tool Executor governance (confirmation gates, idempotency, rate limits) ---
+        if self._tool_executor and settings.enable_tool_executor:
+            gate_result = self._tool_executor.check(name, inputs, tool_id)
+            if gate_result is not None:
+                return gate_result.output
+
         # --- Profile ---
         if name == "get_profile":
             profile = await self._memory.get_profile()
@@ -324,6 +509,7 @@ class AgentCore:
                 description=inputs.get("description"),
                 project_id=inputs.get("project_id"),
             )
+            self._tool_executor.record_execution(name, inputs, True)
             return f"Task added: '{task['content']}' (id={task['id']})"
 
         if name == "complete_task":
@@ -372,6 +558,7 @@ class AgentCore:
                 location=inputs.get("location", ""),
                 calendar_name=inputs.get("calendar_name"),
             )
+            self._tool_executor.record_execution(name, inputs, True)
             cal = result.get("calendar", "")
             cal_tag = f" [{cal}]" if cal else ""
             return f"Event added: '{result['title']}' at {result['start']}{cal_tag}"
@@ -456,12 +643,14 @@ class AgentCore:
         if name == "send_email":
             if not self._email or not self._email.available:
                 return "Email not configured."
-            return await self._email.send_email(
+            result = await self._email.send_email(
                 to=inputs["to"],
                 subject=inputs["subject"],
                 body=inputs["body"],
                 account_id=inputs.get("account_id"),
             )
+            self._tool_executor.record_execution(name, inputs, True)
+            return result
 
         if name == "archive_email":
             if not self._email or not self._email.available:
@@ -542,6 +731,107 @@ class AgentCore:
         if name == "fetch_page":
             return await self._fetch_page(inputs["url"])
 
+        # --- Orchestrator Routing ---
+        if name == "route_to_specialists":
+            if not settings.enable_specialist_routing:
+                return "Specialist routing is disabled."
+            # Gather tool_pull data before calling specialists
+            tool_data = await self._gather_tool_pull_data(inputs.get("tool_pulls", []))
+            result = await route_to_specialists_handler(
+                client=self._client,
+                intent=inputs["intent"],
+                level=inputs["level"],
+                specialists=inputs["specialists"],
+                tool_pulls=inputs.get("tool_pulls", []),
+                context_summary=inputs["context_summary"],
+                tool_data=tool_data,
+            )
+            return result
+
+        # --- Onboarding ---
+        if name == "start_onboarding":
+            if not self._onboarding:
+                return "Onboarding not available."
+            state = await self._onboarding.start()
+            return f"Onboarding started. Status: {state['status']}, Wave: {state.get('current_wave_id', 'none')}"
+
+        if name == "onboarding_save_answer":
+            if not self._onboarding:
+                return "Onboarding not available."
+            state = await self._onboarding.record_answer(
+                question_id=inputs["question_id"],
+                answer=inputs["answer_summary"],
+                is_followup=inputs.get("is_followup", False),
+            )
+            # Check if wave is complete
+            if self._onboarding.should_advance_wave(state):
+                state = await self._onboarding.advance_to_next_wave()
+                if state["status"] == "completed":
+                    return "Answer saved. All onboarding waves complete! Onboarding finished."
+                return f"Answer saved. Wave complete — moving to: {state.get('current_wave_id', 'done')}"
+            answered, total = self._onboarding.get_total_progress(state)
+            return f"Answer saved. Progress: {answered}/{total} questions."
+
+        if name == "onboarding_advance":
+            if not self._onboarding:
+                return "Onboarding not available."
+            if inputs.get("skip_wave"):
+                state = await self._onboarding.advance_to_next_wave()
+            else:
+                state = await self._onboarding.skip_question()
+                if self._onboarding.should_advance_wave(state):
+                    state = await self._onboarding.advance_to_next_wave()
+            if state["status"] == "completed":
+                return "Onboarding complete!"
+            return f"Advanced. Now on wave: {state.get('current_wave_id', 'done')}, question {state.get('question_index', 0) + 1}"
+
+        # --- Elite Memory Stores ---
+        if name == "write_long_term_memory":
+            await self._memory.save_memory(
+                store="long_term",
+                content=inputs["content"],
+                metadata={"category": inputs.get("category", "general")},
+                tags=inputs.get("tags", []),
+            )
+            self._tool_executor.record_execution(name, inputs, True)
+            return "Saved to long-term memory."
+
+        if name == "write_working_memory":
+            await self._memory.save_memory(
+                store="working",
+                content=inputs["content"],
+                metadata={"key": inputs["key"], **(inputs.get("metadata") or {})},
+                tags=[inputs["key"]],
+            )
+            self._tool_executor.record_execution(name, inputs, True)
+            return f"Working memory updated: {inputs['key']}"
+
+        if name == "log_episode":
+            await self._memory.save_memory(
+                store="episodic_log",
+                content=f"[{inputs['episode_type']}:{inputs['date']}] {inputs['content']}",
+                metadata={"date": inputs["date"], "type": inputs["episode_type"]},
+                tags=[inputs["episode_type"], inputs["date"]],
+            )
+            self._tool_executor.record_execution(name, inputs, True)
+            return f"Episode logged: {inputs['episode_type']} for {inputs['date']}"
+
+        if name == "search_elite_memory":
+            stores = inputs.get("stores") or ["long_term", "working", "episodic_log", "pattern_store"]
+            results = await self._memory.search_memory(
+                query=inputs["query"],
+                stores=stores,
+                n=inputs.get("n", 5),
+            )
+            if not results:
+                return "No results found in elite memory stores."
+            lines = []
+            for r in results:
+                store = r.get("store", "?")
+                content = r.get("content", "")
+                lines.append(f"[{store}] {content}")
+            return "\n---\n".join(lines)
+
         return f"Unknown tool: {name}"
 
     # ------------------------------------------------------------------
@@ -588,6 +878,44 @@ class AgentCore:
         except Exception as e:
             logger.exception("fetch_page failed")
             return f"Fetch error: {e}"
+
+    async def _gather_tool_pull_data(self, tool_pulls: list[str]) -> dict[str, str]:
+        """
+        Gather data for the specialist context based on tool_pull keys.
+        Executes data fetches in parallel and returns a dict of key → result.
+        """
+        if not tool_pulls:
+            return {}
+
+        async def pull(key: str) -> tuple[str, str]:
+            try:
+                if key == "todoist.read_open":
+                    tasks = await self._todoist.list_tasks()
+                    return key, await self._todoist.format_tasks_summary(tasks)
+                elif key == "calendar.read_today":
+                    events = await self._calendar.get_today_events()
+                    return key, self._calendar.format_events_summary(events)
+                elif key == "calendar.read_7d":
+                    events = await self._calendar.list_events(days_ahead=7)
+                    return key, self._calendar.format_events_summary(events)
+                elif key == "email.read_headers_unread":
+                    if self._email and self._email.available:
+                        return key, await self._email.list_emails(unread_only=True, count=15)
+                    return key, "Email not configured."
+                else:
+                    return key, f"Unknown tool_pull: {key}"
+            except Exception as e:
+                logger.warning("Tool pull %s failed: %s", key, e)
+                return key, f"{key}: unavailable"
+
+        results = await asyncio.gather(*[pull(k) for k in tool_pulls], return_exceptions=True)
+        data = {}
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            key, value = result
+            data[key] = value
+        return data
 
     def _select_model(self, user_text: str) -> str:
         """

@@ -19,7 +19,7 @@ import logging
 import random
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -37,6 +37,8 @@ from src.integrations.calendar import CalendarClient
 from src.integrations.clickup import ClickUpClient
 from src.integrations.email import EmailManager
 from src.agent.core import AgentCore
+from src.agent.onboarding import OnboardingManager
+from src.agent.tool_executor import ToolExecutor
 from src.scheduler.proactive import ProactiveScheduler
 from src.integrations.messaging.discord_gateway import DiscordGateway
 from src.integrations.messaging.bluebubbles_gateway import BlueBubblesGateway
@@ -93,6 +95,10 @@ async def main() -> None:
     clickup = ClickUpClient() if settings.clickup_api_token else None
     email = EmailManager.from_settings() if (settings.gmail_accounts or settings.yahoo_accounts) else None
 
+    # -- Elite components --
+    onboarding = OnboardingManager(memory) if settings.enable_onboarding else None
+    tool_executor = ToolExecutor() if settings.enable_tool_executor else None
+
     # -- FastAPI app (needed even if BB disabled, for Railway health checks) --
     app = build_app()
 
@@ -103,6 +109,8 @@ async def main() -> None:
         calendar=calendar,
         clickup=clickup,
         email=email,
+        onboarding=onboarding,
+        tool_executor=tool_executor,
         schedule_reminder_fn=None,  # patched below
     )
 
@@ -187,7 +195,7 @@ async def main() -> None:
                 try:
                     await todoist.add_task(
                         r["content"],
-                        due_date=r["due_date"],  # None = no due date
+                        due_date=r["due_date"] or date.today().isoformat(),
                         labels=["location"],
                     )
                 except Exception:
@@ -205,10 +213,10 @@ async def main() -> None:
                 logger.warning("Failed to save location followup note")
 
             followup_checks = [
-                f"Earlier when you got {location} you had these on the list:\n{lines}\n\nDid any of those get done?",
-                f"Checking in — you had a few things to handle when you arrived {loc_phrase}:\n{lines}\n\nAnything you knocked out?",
-                f"Quick follow-up on the things from when you got {location}:\n{lines}\n\nWhere do things stand?",
-                f"You had some things lined up for when you got {location}:\n{lines}\n\nHow's that looking?",
+                f"Earlier when you got {location} you had these on the list:\n{lines}\n\nDid any of those get done? Tell me which ones and I'll mark them off.",
+                f"Checking in — you had a few things to handle when you arrived {loc_phrase}:\n{lines}\n\nAnything you knocked out? I'll complete them in Todoist.",
+                f"Quick follow-up on the things from when you got {location}:\n{lines}\n\nWhere do things stand? Just say which ones are done.",
+                f"You had some things lined up for when you got {location}:\n{lines}\n\nHow's that looking? Tell me what you got to and I'll close them out.",
             ]
             await scheduler.schedule_reminder(
                 random.choice(followup_checks),
@@ -217,7 +225,10 @@ async def main() -> None:
 
         return JSONResponse({"ok": True, "reminders_fired": len(reminders)})
 
-    scheduler = ProactiveScheduler(send_fn=clean_send_fn, todoist=todoist, calendar=calendar, db=db)
+    scheduler = ProactiveScheduler(
+        send_fn=clean_send_fn, todoist=todoist, calendar=calendar,
+        db=db, memory=memory, email_manager=email,
+    )
     agent._scheduler = scheduler  # give agent full scheduler access
     await scheduler.initialize()  # load persistent jobs from DB
     scheduler.start()

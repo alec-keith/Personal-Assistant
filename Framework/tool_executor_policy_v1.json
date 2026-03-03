@@ -1,0 +1,114 @@
+{
+  "bundle": "tool_executor_policy",
+  "version": "1.0.0",
+  "description": "Execution governance layer for Roman-Elite. Enforces permissions, confirmation gates, safety rules, idempotency, logging, and rate limits. Only the Orchestrator may request execution.",
+  "core_principles": [
+    "Only Orchestrator can trigger execution",
+    "All writes are gated by confirmation rules",
+    "All executions are logged",
+    "Idempotency required for all write actions",
+    "Fail safely and revert when possible"
+  ],
+  "actor_permissions": {
+    "Roman-Orchestrator": {
+      "can_read_tools": true,
+      "can_write_tools": true,
+      "can_write_memory": true
+    },
+    "Specialists": {
+      "can_read_tools": false,
+      "can_write_tools": false,
+      "can_write_memory": false,
+      "note": "Specialists may only return JSON recommendations. No direct execution."
+    }
+  },
+  "execution_flow": [
+    "1. Validate caller is Orchestrator",
+    "2. Validate tool key exists",
+    "3. Validate payload schema",
+    "4. Run confirmation gate checks",
+    "5. Check idempotency key",
+    "6. Execute tool",
+    "7. Log action",
+    "8. Return structured result"
+  ],
+  "confirmation_gates": {
+    "calendar": {
+      "requires_confirmation_if": [
+        "event_duration_minutes > 120",
+        "moving_or_deleting_existing_event == true",
+        "event_has_external_attendees == true",
+        "event_outside_work_hours == true"
+      ],
+      "auto_approve_if": [
+        "single_focus_block <= 120_minutes",
+        "no_external_attendees",
+        "within_work_hours"
+      ]
+    },
+    "email": {
+      "default_mode": "draft_first",
+      "requires_confirmation_if": [
+        "new_recipient_not_seen_before == true",
+        "contains_financial_commitment == true",
+        "contains_legal_language == true",
+        "has_attachments == true"
+      ],
+      "auto_send_allowlist_required": true
+    },
+    "tasks": {
+      "requires_confirmation_if": [
+        "mass_complete_tasks_count > 5",
+        "delete_task == true",
+        "project_restructure == true"
+      ],
+      "auto_approve_if": [
+        "single_task_create == true",
+        "single_task_complete == true"
+      ]
+    }
+  },
+  "idempotency": {
+    "enabled": true,
+    "require_idempotency_key_for_write": true,
+    "strategy": "Reject duplicate idempotency keys within 10 minutes"
+  },
+  "rate_limits": {
+    "calendar_writes_per_minute": 10,
+    "email_sends_per_minute": 5,
+    "task_writes_per_minute": 20
+  },
+  "error_handling": {
+    "retry_policy": {
+      "max_retries": 3,
+      "backoff_strategy": "exponential"
+    },
+    "on_failure": [
+      "Log error",
+      "Return structured failure object",
+      "Do not partially execute multi-step write bundles"
+    ]
+  },
+  "audit_logging": {
+    "enabled": true,
+    "log_fields": [
+      "timestamp",
+      "user_id",
+      "intent",
+      "tool_key",
+      "payload_summary",
+      "result_status",
+      "confirmation_required"
+    ]
+  },
+  "rollback_policy": {
+    "calendar": "If batch fails mid-sequence, revert created events",
+    "tasks": "If batch create fails, delete partial tasks",
+    "email": "No rollback possible after send; enforce strict pre-send gates"
+  },
+  "security": {
+    "store_tokens_securely": true,
+    "never_log_secrets": true,
+    "mask_sensitive_fields_in_logs": true
+  }
+}

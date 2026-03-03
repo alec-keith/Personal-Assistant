@@ -1,0 +1,5 @@
+{
+  "file": "agents.json",
+  "description": "Roman Elite Agent Prompts + Schemas",
+  "note": "Full agent definitions previously generated. Insert into your orchestration layer exactly as provided in chat."
+}

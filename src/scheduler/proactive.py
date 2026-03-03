@@ -24,6 +24,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config import settings
 from src.integrations.todoist import TodoistClient
 from src.integrations.calendar import CalendarClient
+from src.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +41,15 @@ class ProactiveScheduler:
         todoist: TodoistClient,
         calendar: CalendarClient,
         db=None,  # src.memory.database.Database | None
+        memory: MemoryStore | None = None,
+        email_manager=None,
     ) -> None:
         self._send = send_fn
         self._todoist = todoist
         self._calendar = calendar
         self._db = db
+        self._memory = memory
+        self._email = email_manager
         self._scheduler = AsyncIOScheduler(timezone=settings.agent_timezone)
         self._setup_builtin_jobs()
 
@@ -392,71 +397,122 @@ class ProactiveScheduler:
             replace_existing=True,
         )
 
+        # Memory TTL cleanup: daily at 3 AM
+        self._scheduler.add_job(
+            self._cleanup_expired_memory,
+            trigger=CronTrigger(
+                hour=3,
+                minute=0,
+                timezone=settings.agent_timezone,
+            ),
+            id="memory_ttl_cleanup",
+            replace_existing=True,
+        )
+
     async def _morning_briefing(self) -> None:
+        """
+        Elite morning briefing — uses the full specialist workflow when available,
+        falls back to the basic data-gathering briefing when specialists are disabled.
+        """
         try:
-            from src.integrations.weather import get_weather
-            from src.integrations.news import get_news
-            from datetime import date
-
-            tz = ZoneInfo(settings.agent_timezone)
-            day_name = datetime.now(tz).strftime("%A")
-
-            # Fetch everything concurrently
-            tasks_task = asyncio.create_task(self._todoist.get_today_tasks())
-            events_task = asyncio.create_task(self._calendar.get_today_events())
-            weather_task = asyncio.create_task(get_weather(settings.user_location, days=1))
-            fin_news_task = asyncio.create_task(get_news(settings.newsapi_key, topic="investing", count=5))
-            gen_news_task = asyncio.create_task(get_news(settings.newsapi_key, topic="top", count=5))
-
-            tasks, events, weather, fin_news, gen_news = await asyncio.gather(
-                tasks_task, events_task, weather_task, fin_news_task, gen_news_task,
-                return_exceptions=True,
-            )
-
-            lines = [f"Good morning — here's your {day_name}.", ""]
-
-            # Weather
-            if isinstance(weather, str):
-                lines += [weather, ""]
-
-            # Calendar
-            if isinstance(events, list):
-                if events:
-                    lines += ["— Calendar —", self._calendar.format_events_summary(events), ""]
-                else:
-                    lines += ["No calendar events today.", ""]
-
-            # Todoist
-            if isinstance(tasks, list):
-                if tasks:
-                    task_summary = await self._todoist.format_tasks_summary(tasks)
-                    lines += [f"— To-Do ({len(tasks)}) —", task_summary, ""]
-                else:
-                    lines += ["Nothing due in Todoist today.", ""]
-
-            # Financial news
-            if isinstance(fin_news, str):
-                lines += [fin_news, ""]
-
-            # General news
-            if isinstance(gen_news, str):
-                lines += [gen_news]
-
-            await self._send("\n".join(lines))
+            if settings.enable_specialist_routing and self._memory:
+                import anthropic
+                from src.agent.workflows import run_daily_briefing
+                client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+                briefing = await run_daily_briefing(
+                    client=client,
+                    todoist=self._todoist,
+                    calendar=self._calendar,
+                    memory=self._memory,
+                    email_manager=self._email,
+                )
+                await self._send(briefing)
+            else:
+                await self._morning_briefing_basic()
         except Exception:
-            logger.exception("Morning briefing failed")
+            logger.exception("Morning briefing failed — trying basic fallback")
+            try:
+                await self._morning_briefing_basic()
+            except Exception:
+                logger.exception("Basic morning briefing also failed")
+
+    async def _morning_briefing_basic(self) -> None:
+        """Basic morning briefing (no specialists) — the original implementation."""
+        from src.integrations.weather import get_weather
+        from src.integrations.news import get_news
+
+        tz = ZoneInfo(settings.agent_timezone)
+        day_name = datetime.now(tz).strftime("%A")
+
+        tasks_task = asyncio.create_task(self._todoist.get_today_tasks())
+        events_task = asyncio.create_task(self._calendar.get_today_events())
+        weather_task = asyncio.create_task(get_weather(settings.user_location, days=1))
+        fin_news_task = asyncio.create_task(get_news(settings.newsapi_key, topic="investing", count=5))
+        gen_news_task = asyncio.create_task(get_news(settings.newsapi_key, topic="top", count=5))
+
+        tasks, events, weather, fin_news, gen_news = await asyncio.gather(
+            tasks_task, events_task, weather_task, fin_news_task, gen_news_task,
+            return_exceptions=True,
+        )
+
+        lines = [f"Good morning — here's your {day_name}.", ""]
+
+        if isinstance(weather, str):
+            lines += [weather, ""]
+
+        if isinstance(events, list):
+            if events:
+                lines += ["— Calendar —", self._calendar.format_events_summary(events), ""]
+            else:
+                lines += ["No calendar events today.", ""]
+
+        if isinstance(tasks, list):
+            if tasks:
+                task_summary = await self._todoist.format_tasks_summary(tasks)
+                lines += [f"— To-Do ({len(tasks)}) —", task_summary, ""]
+            else:
+                lines += ["Nothing due in Todoist today.", ""]
+
+        if isinstance(fin_news, str):
+            lines += [fin_news, ""]
+
+        if isinstance(gen_news, str):
+            lines += [gen_news]
+
+        await self._send("\n".join(lines))
 
     async def _evening_wrapup(self) -> None:
+        """
+        Enhanced evening wrapup. On Fridays, runs the weekly audit workflow
+        when specialist routing is enabled.
+        """
         try:
             tz = ZoneInfo(settings.agent_timezone)
             now = datetime.now(tz)
 
-            # Tomorrow's date range
+            # Friday evening → weekly audit via specialist workflow
+            if now.weekday() == 4 and settings.enable_specialist_routing and self._memory:
+                try:
+                    import anthropic
+                    from src.agent.workflows import run_weekly_audit
+                    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+                    audit = await run_weekly_audit(
+                        client=client,
+                        todoist=self._todoist,
+                        calendar=self._calendar,
+                        memory=self._memory,
+                        email_manager=self._email,
+                    )
+                    await self._send(audit)
+                    return
+                except Exception:
+                    logger.exception("Weekly audit failed — falling back to basic wrapup")
+
+            # Regular evening wrapup
             from datetime import timedelta
             tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             tomorrow_end = tomorrow_start + timedelta(days=1)
 
-            # Fetch concurrently
             open_tasks_task = asyncio.create_task(self._todoist.get_today_tasks())
             tomorrow_events_task = asyncio.create_task(
                 self._calendar.list_events(start=tomorrow_start, end=tomorrow_end)
@@ -472,14 +528,12 @@ class ProactiveScheduler:
 
             lines = ["Evening check-in.", ""]
 
-            # Still open today
             if isinstance(open_tasks, list) and open_tasks:
                 open_summary = await self._todoist.format_tasks_summary(open_tasks)
                 lines += [f"Still open today ({len(open_tasks)}):", open_summary, ""]
             else:
                 lines += ["Today's board is clear.", ""]
 
-            # Tomorrow preview
             lines += ["— Tomorrow —", ""]
 
             if isinstance(tomorrow_events, list) and tomorrow_events:
@@ -514,3 +568,14 @@ class ProactiveScheduler:
             )
         except Exception:
             logger.exception("Overdue nudge failed")
+
+    async def _cleanup_expired_memory(self) -> None:
+        """Delete expired memory entries (working memory 30d, episodic 365d)."""
+        if not self._memory:
+            return
+        try:
+            count = await self._memory.delete_expired_memory()
+            if count > 0:
+                logger.info("Cleaned up %d expired memory entries", count)
+        except Exception:
+            logger.exception("Memory TTL cleanup failed")

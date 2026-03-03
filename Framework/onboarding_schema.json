@@ -1,0 +1,314 @@
+{
+  "bundle": "onboarding_schema",
+  "version": "1.0.0",
+  "intent": "onboarding_interview",
+  "wave_rules": {
+    "max_questions_per_wave": 10,
+    "max_followups_per_question": 1,
+    "stop_if_user_overwhelmed": true,
+    "allow_skip": true,
+    "progress_tracking": {
+      "enabled": true,
+      "persist_to_memory_store": "working",
+      "fields": [
+        "current_wave_id",
+        "question_index",
+        "completed_waves"
+      ]
+    }
+  },
+  "memory_write_policy": {
+    "default_store_for_answers": "long_term",
+    "also_write_to_working_for_current_goals": true,
+    "pattern_store_rule": "Write only if repeated >= 3 times across episodic logs OR user explicitly confirms",
+    "sensitive_info_handling": {
+      "store_minimally": true,
+      "avoid_exact_account_numbers": true,
+      "avoid_full_email_bodies": true
+    }
+  },
+  "waves": [
+    {
+      "id": "identity_goals",
+      "title": "Identity, goals, constraints",
+      "write_to_memory": [
+        "long_term",
+        "working"
+      ],
+      "questions": [
+        {
+          "id": "win_life_12mo",
+          "prompt": "What does a ‘winning life’ look like 12 months from now? Be specific.",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "top_3_goals",
+          "prompt": "What are your top 3 goals right now (business/health/relationship)?",
+          "answer_type": "list_3"
+        },
+        {
+          "id": "stress_sources",
+          "prompt": "What are your biggest sources of stress today?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "time_drains",
+          "prompt": "What are the 3 biggest drains on your time each week?",
+          "answer_type": "list_3"
+        },
+        {
+          "id": "non_negotiables",
+          "prompt": "What are your non-negotiables (family, faith, training, etc.)?",
+          "answer_type": "list"
+        },
+        {
+          "id": "deep_work_hours",
+          "prompt": "What hours do you want protected for deep work (and what days)?",
+          "answer_type": "schedule_window"
+        },
+        {
+          "id": "patterns_to_fix",
+          "prompt": "What recurring mistakes/patterns do you want fixed most?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "ruthless_about",
+          "prompt": "What do you want me to be ruthless about?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "never_do",
+          "prompt": "What do you want me to never do (boundaries)?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "checkin_style",
+          "prompt": "How do you want check-ins to feel: gentle, balanced, or aggressive?",
+          "answer_type": "enum",
+          "enum": [
+            "gentle",
+            "balanced",
+            "aggressive"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "health_energy",
+      "title": "Health & energy",
+      "write_to_memory": [
+        "long_term",
+        "working"
+      ],
+      "questions": [
+        {
+          "id": "sleep_hours",
+          "prompt": "How many hours do you sleep on average? And quality 1–10?",
+          "answer_type": "sleep_hours_plus_rating"
+        },
+        {
+          "id": "training_now",
+          "prompt": "What’s your training routine right now?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "training_ideal",
+          "prompt": "What’s your ideal training routine?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "nutrition_struggle",
+          "prompt": "Nutrition: biggest struggle right now?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "nutrition_win",
+          "prompt": "Nutrition: biggest win right now?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "energy_peak",
+          "prompt": "What time of day are you highest energy?",
+          "answer_type": "time_window"
+        },
+        {
+          "id": "limitations",
+          "prompt": "Any injuries/limitations I should know about?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "best_week_habits",
+          "prompt": "What habits correlate with your best weeks?",
+          "answer_type": "list"
+        },
+        {
+          "id": "worst_week_habits",
+          "prompt": "What habits correlate with your worst weeks?",
+          "answer_type": "list"
+        }
+      ]
+    },
+    {
+      "id": "relationships",
+      "title": "Marriage, family, friends",
+      "write_to_memory": [
+        "long_term",
+        "working"
+      ],
+      "questions": [
+        {
+          "id": "wife_needs",
+          "prompt": "What does Cheyenne need more of from you this season?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "protected_family_nights",
+          "prompt": "How many nights/week should be protected for family?",
+          "answer_type": "number"
+        },
+        {
+          "id": "conflict_triggers",
+          "prompt": "Any recurring conflict triggers I should watch for?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "intervene_rule",
+          "prompt": "When work starts eating family time, how do you want me to intervene?",
+          "answer_type": "enum",
+          "enum": [
+            "gentle_nudge",
+            "direct_callout",
+            "hard_stop_recommendation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "work_ops",
+      "title": "Work, priorities, and systems",
+      "write_to_memory": [
+        "long_term",
+        "working"
+      ],
+      "questions": [
+        {
+          "id": "top_projects",
+          "prompt": "What are the 3 most important projects right now?",
+          "answer_type": "list_3"
+        },
+        {
+          "id": "hate_tasks",
+          "prompt": "What tasks do you hate doing but keep doing?",
+          "answer_type": "list"
+        },
+        {
+          "id": "delegate_now",
+          "prompt": "What should be delegated immediately?",
+          "answer_type": "list"
+        },
+        {
+          "id": "tools_must_use",
+          "prompt": "Confirm your must-use tools and where I should operate: Fantastical, Todoist, Gmail/Yahoo (any others)?",
+          "answer_type": "list"
+        },
+        {
+          "id": "productive_day_definition",
+          "prompt": "What does ‘done’ mean for a productive day? (2–4 bullets)",
+          "answer_type": "list"
+        },
+        {
+          "id": "daily_brief_contents",
+          "prompt": "What do you want daily briefs to contain (Top 3, schedule blocks, inbox, health, relationship)?",
+          "answer_type": "list"
+        }
+      ]
+    },
+    {
+      "id": "finance",
+      "title": "Money & risk",
+      "write_to_memory": [
+        "long_term"
+      ],
+      "questions": [
+        {
+          "id": "finance_goal_12mo",
+          "prompt": "Top financial goal for 12 months?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "major_purchases",
+          "prompt": "Any major purchases planned in the next 12 months?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "spend_out_of_control",
+          "prompt": "What spending categories are out of control (if any)?",
+          "answer_type": "list"
+        },
+        {
+          "id": "risk_tolerance",
+          "prompt": "Risk tolerance: low, medium, or high?",
+          "answer_type": "enum",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "roman_rules",
+      "title": "Rules of engagement",
+      "write_to_memory": [
+        "long_term"
+      ],
+      "questions": [
+        {
+          "id": "callout_tone",
+          "prompt": "When I call you out, what tone works best?",
+          "answer_type": "enum",
+          "enum": [
+            "gentle",
+            "balanced",
+            "aggressive"
+          ]
+        },
+        {
+          "id": "push_when_tired",
+          "prompt": "Do you want me to push hard even when you’re tired?",
+          "answer_type": "enum",
+          "enum": [
+            "yes_push",
+            "depends_ask_first",
+            "no_protect_recovery"
+          ]
+        },
+        {
+          "id": "off_limits",
+          "prompt": "Any topics off limits?",
+          "answer_type": "free_text"
+        },
+        {
+          "id": "trust_definition",
+          "prompt": "What does trust look like between us (how I act, what I store, what I ask)?",
+          "answer_type": "free_text"
+        }
+      ]
+    }
+  ],
+  "outputs_after_completion": [
+    "life_os_dashboard",
+    "goal_stack",
+    "weekly_template",
+    "proactive_checkin_rules"
+  ],
+  "router_phrases_to_start": [
+    "roman onboard me",
+    "interview me",
+    "learn my life",
+    "set up my system",
+    "start onboarding",
+    "start the interview"
+  ]
+}

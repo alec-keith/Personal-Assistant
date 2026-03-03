@@ -1,0 +1,57 @@
+[
+  {
+    "op": "add",
+    "path": "/intents/-",
+    "value": {
+      "intent": "onboarding_interview",
+      "description": "Wave-based onboarding interview to learn all areas of Alec’s life and configure Roman’s operating system.",
+      "match_signals": {
+        "keywords": [
+          "roman onboard me",
+          "interview me",
+          "learn my life",
+          "set up my system",
+          "start onboarding",
+          "start the interview",
+          "onboard",
+          "onboarding"
+        ],
+        "secondary_signals": [
+          "goals",
+          "habits",
+          "routines",
+          "audit",
+          "life",
+          "productivity"
+        ]
+      },
+      "tool_pulls": [
+        {
+          "tool_key": "calendar.read_7d",
+          "inputs": {
+            "timezone": "America/New_York"
+          }
+        }
+      ],
+      "specialists": [
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Finance",
+        "Roman-Exec",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "assembly_rules": {
+        "top_outcomes_max": 1,
+        "must_include_cuts": false,
+        "deliverable": "interview_wave_questions_plus_memory_writes"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/intent_resolution/priority_order_when_multiple/0",
+    "value": "onboarding_interview"
+  }
+]

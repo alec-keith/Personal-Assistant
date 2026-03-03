@@ -1,0 +1,416 @@
+{
+  "bundle": "complexity_matrix",
+  "version": "1.0.0",
+  "purpose": "Defines complexity levels and default specialist routing for Roman-Elite. Orchestrator uses this to decide: (a) Orchestrator-only, (b) minimal specialists, or (c) full elite flow.",
+  "levels": {
+    "0": {
+      "name": "Atomic",
+      "description": "Mechanical, low-risk, reversible actions. Orchestrator handles directly. No specialists.",
+      "default_specialists": [],
+      "max_specialists": 0
+    },
+    "1": {
+      "name": "Tactical",
+      "description": "Requires structuring, sequencing, or triage. Usually 1–2 specialists.",
+      "default_specialists": [
+        "Roman-Exec"
+      ],
+      "max_specialists": 2
+    },
+    "2": {
+      "name": "Strategic",
+      "description": "High impact, multi-domain, tradeoffs, or risk. Full committee with QA.",
+      "default_specialists": [
+        "Roman-Exec",
+        "Roman-Strategy",
+        "Roman-Critic"
+      ],
+      "max_specialists": 7
+    }
+  },
+  "routing_rules": {
+    "default": {
+      "email": {
+        "draft_first": true,
+        "send_requires_confirmation_unless_allowlisted": true
+      },
+      "calendar": {
+        "avoid_overlaps": true,
+        "buffers_minutes": 15
+      },
+      "task_taxonomy": {
+        "enforce_verb_first": true,
+        "require_project_priority_estimate": true
+      }
+    },
+    "escalation_triggers": [
+      {
+        "trigger": "multi_step_plan_detected",
+        "escalate_to_level": 1,
+        "reason": "Sequencing/prioritization required"
+      },
+      {
+        "trigger": "tradeoff_or_cuts_required",
+        "escalate_to_level": 2,
+        "reason": "Needs keep/kill/defer decisions"
+      },
+      {
+        "trigger": "multi_domain_impact",
+        "escalate_to_level": 2,
+        "reason": "Work/health/relationships conflict"
+      },
+      {
+        "trigger": "high_risk_actions",
+        "escalate_to_level": 2,
+        "reason": "Rescheduling others, sending emails, big calendar changes"
+      },
+      {
+        "trigger": "recurring_friction_detected",
+        "escalate_to_level": 2,
+        "reason": "Likely needs SOP/automation"
+      },
+      {
+        "trigger": "stress_or_burnout_language",
+        "escalate_to_level": 2,
+        "reason": "Health/energy guardrails required"
+      }
+    ],
+    "specialist_add_rules": [
+      {
+        "if_signal_contains_any": [
+          "burnout",
+          "exhausted",
+          "sleep",
+          "stressed",
+          "overwhelmed"
+        ],
+        "add_specialists": [
+          "Roman-Health"
+        ]
+      },
+      {
+        "if_signal_contains_any": [
+          "wife",
+          "cheyenne",
+          "marriage",
+          "kids",
+          "family",
+          "relationship"
+        ],
+        "add_specialists": [
+          "Roman-Relationships"
+        ]
+      },
+      {
+        "if_signal_contains_any": [
+          "automation",
+          "workflow",
+          "system",
+          "SOP",
+          "integrate",
+          "zapier",
+          "n8n",
+          "make"
+        ],
+        "add_specialists": [
+          "Roman-Systems"
+        ]
+      },
+      {
+        "if_signal_contains_any": [
+          "budget",
+          "spend",
+          "hire",
+          "salary",
+          "investment",
+          "price",
+          "ROI"
+        ],
+        "add_specialists": [
+          "Roman-Finance"
+        ]
+      },
+      {
+        "if_signal_contains_any": [
+          "should I",
+          "decide",
+          "tradeoff",
+          "pros and cons"
+        ],
+        "add_specialists": [
+          "Roman-Strategy"
+        ]
+      },
+      {
+        "if_any_write_tools_planned": true,
+        "add_specialists": [
+          "Roman-Critic"
+        ]
+      }
+    ],
+    "specialist_remove_rules": [
+      {
+        "if_level": 0,
+        "remove_specialists": [
+          "Roman-Exec",
+          "Roman-Strategy",
+          "Roman-Systems",
+          "Roman-Health",
+          "Roman-Relationships",
+          "Roman-Finance",
+          "Roman-Critic",
+          "Roman-Narrative"
+        ]
+      },
+      {
+        "if_level": 1,
+        "remove_specialists_unless_explicitly_requested": [
+          "Roman-Strategy",
+          "Roman-Health",
+          "Roman-Relationships",
+          "Roman-Finance",
+          "Roman-Narrative"
+        ]
+      }
+    ]
+  },
+  "intent_defaults": [
+    {
+      "intent": "task_capture_single",
+      "level": 0,
+      "default_specialists": [],
+      "tool_pulls": [
+        "todoist.read_open"
+      ],
+      "common_actions": [
+        "todoist.create_task"
+      ],
+      "examples": [
+        "Add task: Call John tomorrow",
+        "Remind me to pay the bill Friday"
+      ]
+    },
+    {
+      "intent": "task_complete_single",
+      "level": 0,
+      "default_specialists": [],
+      "tool_pulls": [
+        "todoist.read_open"
+      ],
+      "common_actions": [
+        "todoist.complete_task"
+      ],
+      "examples": [
+        "Mark ‘Email vendor’ complete"
+      ]
+    },
+    {
+      "intent": "calendar_create_simple_block",
+      "level": 0,
+      "default_specialists": [],
+      "tool_pulls": [
+        "calendar.read_today"
+      ],
+      "common_actions": [
+        "calendar.create_event"
+      ],
+      "examples": [
+        "Block 90 minutes today for deep work at 10am"
+      ]
+    },
+    {
+      "intent": "email_draft_single",
+      "level": 0,
+      "default_specialists": [],
+      "tool_pulls": [
+        "email.read_thread"
+      ],
+      "common_actions": [
+        "email.draft_reply"
+      ],
+      "examples": [
+        "Draft a reply agreeing to Friday and asking for agenda"
+      ]
+    },
+    {
+      "intent": "task_capture_bulk",
+      "level": 1,
+      "default_specialists": [
+        "Roman-Exec"
+      ],
+      "tool_pulls": [
+        "todoist.read_open"
+      ],
+      "common_actions": [
+        "todoist.create_task"
+      ],
+      "examples": [
+        "Here are 15 things—turn them into tasks and organize them"
+      ]
+    },
+    {
+      "intent": "task_prioritize",
+      "level": 1,
+      "default_specialists": [
+        "Roman-Exec",
+        "Roman-Critic"
+      ],
+      "tool_pulls": [
+        "todoist.read_open",
+        "calendar.read_7d"
+      ],
+      "common_actions": [
+        "todoist.update_task"
+      ],
+      "examples": [
+        "Prioritize my tasks for today"
+      ]
+    },
+    {
+      "intent": "email_triage_inbox_zero",
+      "level": 1,
+      "default_specialists": [
+        "Roman-Exec",
+        "Roman-Systems",
+        "Roman-Critic"
+      ],
+      "tool_pulls": [
+        "email.read_headers_unread"
+      ],
+      "common_actions": [
+        "email.draft_reply",
+        "todoist.create_task"
+      ],
+      "examples": [
+        "Clean my inbox and create tasks for anything that needs follow-up"
+      ]
+    },
+    {
+      "intent": "plan_day",
+      "level": 1,
+      "default_specialists": [
+        "Roman-Exec",
+        "Roman-Critic"
+      ],
+      "tool_pulls": [
+        "calendar.read_today",
+        "todoist.read_open",
+        "email.read_headers_unread"
+      ],
+      "common_actions": [
+        "calendar.create_event",
+        "todoist.update_task"
+      ],
+      "examples": [
+        "Plan my day and time-block it"
+      ]
+    },
+    {
+      "intent": "plan_week",
+      "level": 2,
+      "default_specialists": [
+        "Roman-Exec",
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d",
+        "todoist.read_open",
+        "email.read_headers_unread"
+      ],
+      "common_actions": [
+        "calendar.create_event",
+        "calendar.update_event",
+        "todoist.update_task"
+      ],
+      "examples": [
+        "Rebuild my week—I’m behind and overloaded"
+      ]
+    },
+    {
+      "intent": "audit_life",
+      "level": 2,
+      "default_specialists": [
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Exec",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d",
+        "todoist.read_open"
+      ],
+      "common_actions": [
+        "calendar.create_event",
+        "todoist.create_task"
+      ],
+      "examples": [
+        "Audit my life and patterns and give me a corrective plan"
+      ]
+    },
+    {
+      "intent": "decision_support",
+      "level": 2,
+      "default_specialists": [
+        "Roman-Strategy",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d"
+      ],
+      "common_actions": [],
+      "examples": [
+        "Should I hire a new assistant or keep doing it myself?"
+      ]
+    },
+    {
+      "intent": "systems_build",
+      "level": 2,
+      "default_specialists": [
+        "Roman-Systems",
+        "Roman-Strategy",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "todoist.read_open"
+      ],
+      "common_actions": [],
+      "examples": [
+        "Build an automation workflow between email and Todoist"
+      ]
+    },
+    {
+      "intent": "onboarding_interview",
+      "level": 2,
+      "default_specialists": [
+        "Roman-Strategy",
+        "Roman-Health",
+        "Roman-Relationships",
+        "Roman-Finance",
+        "Roman-Exec",
+        "Roman-Critic",
+        "Roman-Narrative"
+      ],
+      "tool_pulls": [
+        "calendar.read_7d"
+      ],
+      "common_actions": [],
+      "examples": [
+        "Interview me to learn all areas of my life"
+      ]
+    }
+  ],
+  "committee_cap_policy": {
+    "level_0_cap": 0,
+    "level_1_cap": 2,
+    "level_2_cap": 7,
+    "hard_rule": "Never exceed cap. If more specialists would be added, prioritize: Exec, Strategy, Critic, then domain-specific (Health/Relationships/Systems/Finance), then Narrative last."
+  }
+}
