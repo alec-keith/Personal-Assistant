@@ -164,6 +164,7 @@ async def call_specialist(
                 "recommendations": [], "risks": [], "tool_requests": [], "questions_if_blocked": []}
 
     try:
+        logger.info("[SPECIALIST] Calling %s (model=%s)", specialist_name, model)
         response = await client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -171,6 +172,9 @@ async def call_specialist(
             messages=[{"role": "user", "content": context}],
         )
         text = response.content[0].text.strip()
+        logger.info("[SPECIALIST] %s responded — %d chars, usage=%s",
+                     specialist_name, len(text),
+                     f"in={response.usage.input_tokens}/out={response.usage.output_tokens}")
 
         # Narrative returns plain text, not JSON
         if specialist_name == "Roman-Narrative":

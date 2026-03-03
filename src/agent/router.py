@@ -131,6 +131,9 @@ async def route_to_specialists_handler(
     The Orchestrator passes tool_data when it has already gathered tool results
     (calendar events, tasks, emails, etc.) through normal tool calls.
     """
+    logger.info("[SPECIALISTS] Routing — intent=%s level=%d specialists=%s tool_pulls=%s",
+                 intent, level, specialists, tool_pulls)
+
     # Build full context for specialists
     context_parts = [
         f"Intent: {intent}",
@@ -152,19 +155,25 @@ async def route_to_specialists_handler(
     # Call analysis specialists
     if level >= 2:
         # Strategic: parallel fan-out
+        logger.info("[SPECIALISTS] Level 2 parallel fan-out: %s", analysis_specialists)
         outputs = await call_specialists_parallel(client, analysis_specialists, full_context)
     else:
         # Tactical: sequential (1-2 specialists)
+        logger.info("[SPECIALISTS] Level 1 sequential: %s", analysis_specialists)
         outputs = []
         accumulated_context = full_context
         for spec_name in analysis_specialists:
             result = await call_specialist(client, spec_name, accumulated_context)
+            logger.info("[SPECIALISTS] %s returned — summary=%s", spec_name,
+                         (result.get("summary") or "")[:100])
             outputs.append(result)
             # Each subsequent specialist sees prior outputs
             accumulated_context = full_context + "\n\n--- Prior Specialist Outputs ---\n" + format_specialist_outputs(outputs)
 
     # Format outputs for the Orchestrator
     formatted = format_specialist_outputs(outputs)
+    logger.info("[SPECIALISTS] All done — %d specialists responded, %d chars output",
+                 len(outputs), len(formatted))
 
     # If Narrative requested, make a synthesis pass
     if include_narrative and outputs:

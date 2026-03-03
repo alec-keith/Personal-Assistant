@@ -135,6 +135,9 @@ class AgentCore:
         for_voice: when True, forces the fast model — voice replies must be quick.
         """
         self._user_profile = await self._memory.get_profile()
+        logger.info("[ORCHESTRATOR] Message received: %r (model=%s, routing=%s)",
+                     user_text[:80], self._current_model,
+                     "enabled" if self._routing_context else "disabled")
 
         # Location reminder fast-path: intercept before hitting Claude.
         # Handles both "when I get home remind me to X" and "remind me tomorrow when I get home to X".
@@ -378,8 +381,15 @@ class AgentCore:
         """
         messages = list(self._history)
         routing_ctx = self._routing_context if settings.enable_specialist_routing else None
+        turn = 0
+
+        logger.info("[AGENT_LOOP] Starting — model=%s routing=%s onboarding=%s",
+                     self._current_model,
+                     "injected" if routing_ctx else "off",
+                     "active" if onboarding_context else "off")
 
         while True:
+            turn += 1
             response = await self._client.messages.create(
                 model=self._current_model,
                 max_tokens=4096,
@@ -400,7 +410,13 @@ class AgentCore:
                 if block.type == "text"
             ]
 
+            tool_names = [b.name for b in response.content if b.type == "tool_use"]
+            logger.info("[AGENT_LOOP] Turn %d — stop=%s tools=%s model=%s",
+                         turn, response.stop_reason, tool_names or "none", response.model)
+
             if response.stop_reason == "end_turn":
+                logger.info("[AGENT_LOOP] Complete — %d turns, response=%d chars",
+                             turn, sum(len(t) for t in text_parts))
                 return "\n".join(text_parts) if text_parts else "(no response)"
 
             if response.stop_reason == "tool_use":
