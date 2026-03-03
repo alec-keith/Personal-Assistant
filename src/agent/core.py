@@ -398,7 +398,7 @@ class AgentCore:
             turn += 1
             response = await self._client.messages.create(
                 model=self._current_model,
-                max_tokens=4096,
+                max_tokens=8192,
                 system=build_system_prompt(
                     self._calendar.calendar_names(),
                     self._user_profile,

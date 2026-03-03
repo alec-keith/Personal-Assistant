@@ -30,13 +30,14 @@ You MUST respond with valid JSON only — no prose outside the JSON object.
 Use exactly this schema:
 {
     "agent": "<your specialist name>",
-    "summary": "<1-2 sentence assessment>",
+    "summary": "<concise assessment of the situation>",
     "recommendations": ["<specific, actionable recommendation>", ...],
     "risks": ["<risk or concern>", ...],
     "tool_requests": [{"tool": "<tool_key>", "action": "<what to do>", "params": {}}],
     "questions_if_blocked": ["<question if you need more info>"]
 }
-IMPORTANT: Keep it tight. Summary is 1-2 sentences max. Each recommendation is ONE sentence. Each risk is ONE sentence. Max 5 recommendations, max 3 risks. No explanations inside arrays — just the actionable point. If you have nothing to add, return empty arrays.
+Be thorough — give detailed, actionable recommendations with enough context to be useful.
+If you have nothing to add for a field, return an empty array.
 """
 
 SPECIALISTS: dict[str, dict[str, str]] = {
@@ -151,7 +152,7 @@ async def call_specialist(
     specialist_name: str,
     context: str,
     model: str = "claude-haiku-4-5-20251001",
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,
 ) -> dict[str, Any]:
     """
     Call a single specialist with context and return structured JSON.
