@@ -9,7 +9,7 @@ paginated results as {"results": [...], "next_cursor": ...}.
 """
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -24,9 +24,10 @@ BASE_URL = "https://api.todoist.com/api/v1"
 def _apply_filter(tasks: list[dict], filter_str: str) -> list[dict]:
     """
     Client-side approximation of Todoist filter syntax.
-    Handles: today, overdue, p1-p4, 'no due date', and | (OR) combinations.
+    Handles: today, tomorrow, overdue, p1-p4, 'no due date', and | (OR) combinations.
     """
     today = date.today().isoformat()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
     parts = [p.strip().lower() for p in filter_str.split("|")]
 
     matched = []
@@ -39,7 +40,9 @@ def _apply_filter(tasks: list[dict], filter_str: str) -> list[dict]:
         include = False
         for part in parts:
             part = part.strip()
-            if "today" in part and due_date == today:
+            if "today" in part and "tomorrow" not in part and due_date == today:
+                include = True
+            elif "tomorrow" in part and due_date == tomorrow:
                 include = True
             elif "overdue" in part and due_date and due_date < today:
                 include = True
@@ -50,6 +53,34 @@ def _apply_filter(tasks: list[dict], filter_str: str) -> list[dict]:
         if include:
             matched.append(task)
     return matched
+
+
+def _format_due_label(due: dict) -> str:
+    """Compute a human-readable due label from the actual due.date, not the stale due.string."""
+    raw = (due.get("date") or "")[:10]
+    if not raw:
+        return "no due date"
+    today = date.today()
+    try:
+        due_date = date.fromisoformat(raw)
+    except ValueError:
+        return raw
+    delta = (due_date - today).days
+    if delta < -1:
+        return f"overdue, {due_date.strftime('%b %-d')}"
+    if delta == -1:
+        return "yesterday"
+    if delta == 0:
+        # Preserve recurring info like "every day" if present
+        due_string = due.get("string", "")
+        if due_string and "every" in due_string.lower():
+            return f"today, {due_string}"
+        return "today"
+    if delta == 1:
+        return "tomorrow"
+    if delta < 7:
+        return due_date.strftime("%A")  # e.g. "Wednesday"
+    return due_date.strftime("%b %-d")  # e.g. "Mar 15"
 
 
 class TodoistClient:
@@ -196,7 +227,7 @@ class TodoistClient:
         lines = []
         for t in tasks:
             due = t.get("due", {}) or {}
-            due_str = due.get("string") or due.get("date") or "no due date"
+            due_str = _format_due_label(due)
             priority_map = {1: "", 2: "🔵", 3: "🟠", 4: "🔴"}
             priority_icon = priority_map.get(t.get("priority", 1), "")
             lines.append(f"- {priority_icon} {t['content']} ({due_str}) [id:{t['id']}]")
