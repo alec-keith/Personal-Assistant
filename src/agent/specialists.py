@@ -151,7 +151,7 @@ async def call_specialist(
     specialist_name: str,
     context: str,
     model: str = "claude-haiku-4-5-20251001",
-    max_tokens: int = 1500,
+    max_tokens: int = 3000,
 ) -> dict[str, Any]:
     """
     Call a single specialist with context and return structured JSON.
