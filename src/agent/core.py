@@ -171,6 +171,12 @@ class AgentCore:
         else:
             self._current_model = self._select_model(user_text)
 
+        # Orchestrator routing rules are too complex for Haiku — bump to Sonnet minimum
+        if self._routing_context and self._current_model == settings.claude_model_simple:
+            self._current_model = settings.claude_model_complex
+            logger.info("[ORCHESTRATOR] Bumped model to %s (routing requires Sonnet minimum)",
+                         self._current_model)
+
         # Build message content — multimodal if images present
         if images:
             content: str | list = []
